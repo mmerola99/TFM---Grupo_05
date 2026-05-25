@@ -1,0 +1,36 @@
+{
+  "modelo1_mae": 0.0,
+  "modelo1_r2": 1.0,
+  "modelo2_accuracy": 0.9633,
+  "modelo3_predicciones": [
+    {
+      "fecha": "2026-06",
+      "ahorro_predicho": 370.9
+    },
+    {
+      "fecha": "2026-07",
+      "ahorro_predicho": 367.18
+    },
+    {
+      "fecha": "2026-08",
+      "ahorro_predicho": 363.7
+    },
+    {
+      "fecha": "2026-09",
+      "ahorro_predicho": 360.41
+    },
+    {
+      "fecha": "2026-10",
+      "ahorro_predicho": 357.2
+    },
+    {
+      "fecha": "2026-11",
+      "ahorro_predicho": 353.95
+    }
+  ],
+  "clases_modelo2": [
+    "ahorro_insuficiente",
+    "ahorro_moderado",
+    "buen_ahorrador"
+  ]
+}
