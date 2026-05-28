@@ -16,24 +16,18 @@ Los datos han sido recopilados mediante dos vías obligatorias (API y web scrapi
 ---
 
 ## Estructura del repositorio
-TFM---Grupo_05/
-├── README.md
-├── 01_scraping/
-│   └── scraping_bde.py              ← Web scraping: Euríbor + Morosidad BdE
-├── 02_api/
-│   ├── api_eurostat.py              ← API Eurostat: Ahorro, Desempleo, IPC
-│   └── genera_dataset_sintetico.py  ← Dataset sintético 41.000 registros
-├── 03_limpieza/
-│   └── limpieza_preparacion.py      ← Limpieza y dataset consolidado
-├── 04_eda/
-│   └── analisis_exploratorio.py     ← EDA con 5 visualizaciones
-├── 05_modelos/
-│   └── modelos_predictivos.py       ← 3 modelos de ML
-├── 05_streamlit/
-│   └── app.py                       ← Dashboard predictivo interactivo
-└── data/
-├── raw/                          ← Datos originales sin procesar
-└── clean/                        ← Dataset limpio + gráficos + métricas
+
+| Carpeta / Archivo | Descripción |
+|---|---|
+| `01_scraping/scraping_bde.py` | Web scraping: Euríbor histórico + Morosidad BdE |
+| `02_api/api_eurostat.py` | API Eurostat: Tasa de ahorro, Desempleo, IPC |
+| `02_api/genera_dataset_sintetico.py` | Generación dataset sintético 41.000 registros |
+| `03_limpieza/limpieza_preparacion.py` | Limpieza, estandarización y dataset consolidado |
+| `04_eda/analisis_exploratorio.py` | Análisis exploratorio con 5 visualizaciones |
+| `05_modelos/modelos_predictivos.py` | 3 modelos de ML (Regresión Lineal, Logística, Serie temporal) |
+| `05_streamlit/app.py` | Dashboard predictivo interactivo con simulador |
+| `data/raw/` | CSV de datos originales sin procesar |
+| `data/clean/` | Dataset limpio + gráficos PNG + métricas JSON |             ← Dataset limpio + gráficos + métricas
 ---
 
 ## Cómo ejecutar el proyecto
