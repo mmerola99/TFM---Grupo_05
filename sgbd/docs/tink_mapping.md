@@ -10,9 +10,9 @@ momento de hacerlo.
 ## 1. Origen
 
 Dos salidas de la API de Tink (sandbox "demo bank", usuario de España) sobre
-sus endpoints `list accounts` y `list transactions`, compartidas por el grupo
-el 2/07/2026. Son datos sintéticos del propio sandbox de Tink, no datos de
-usuarios reales.
+sus endpoints `list accounts` y `list transactions`, que compartimos entre
+nosotros el 2/07/2026. Son datos sintéticos del propio sandbox de Tink, no
+datos de usuarios reales.
 
 ## 2. Lo que confirma una decisión de diseño ya tomada
 

@@ -175,8 +175,36 @@ CREATE TABLE coach.recomendaciones (
     confianza_modelo NUMERIC(5,4) CHECK (confianza_modelo BETWEEN 0 AND 1)
 );
 
+-- ---------------------------------------------------------------------
+-- INTERACCIONES (entidad fuerte, dependencia existencial de USUARIO)
+-- Dataset C — interacciones con el asistente y salidas de los tres
+-- modelos de ML. Estructura semiestructurada (apartado 2.4): los campos
+-- comunes (usuario_id, tipo_interaccion, timestamp) se modelan como
+-- columnas, y la parte variable según el modelo que genera cada
+-- interacción se persiste en una columna JSONB con validación mínima
+-- mediante restricción CHECK, en lugar de en una colección MongoDB
+-- separada (decisión revisada respecto al diseño inicial documentado
+-- en versiones anteriores del trabajo; ver apartado 4.3).
+-- ---------------------------------------------------------------------
+CREATE TABLE coach.interacciones (
+    interaccion_id    SERIAL PRIMARY KEY,
+    usuario_id        INTEGER NOT NULL REFERENCES coach.usuarios(usuario_id)
+                        ON DELETE CASCADE,
+    tipo_interaccion  VARCHAR(30) NOT NULL CHECK (tipo_interaccion IN (
+                        'prediccion_ahorro', 'clasificacion_perfil', 'proyeccion_temporal'
+                      )),
+    timestamp         TIMESTAMP NOT NULL DEFAULT now(),
+    entrada_usuario   TEXT,
+    respuesta_mostrada TEXT NOT NULL,
+    salida_modelo     JSONB NOT NULL,
+    -- Validación mínima de esquema: el documento JSON debe declarar
+    -- qué modelo lo generó (equivalente físico del $jsonSchema
+    -- documentado inicialmente para MongoDB)
+    CONSTRAINT chk_salida_modelo_tiene_modelo CHECK (salida_modelo ? 'modelo')
+);
+
 -- =====================================================================
--- ÍNDICES (apartado 5 y explicaciones de las Consultas 1-6, apartado 6)
+-- ÍNDICES (apartado 5 y explicaciones de las Consultas 1-7, apartado 6)
 -- =====================================================================
 
 -- Consulta 1: series temporales por indicador y país
@@ -200,6 +228,13 @@ CREATE INDEX idx_recomendaciones_usuario_fecha
 -- Consulta 3: agregación por categoría
 CREATE INDEX idx_transacciones_categoria
     ON coach.transacciones (categoria);
+
+-- Consulta 7 (Dataset C): filtrado por usuario y orden cronológico, más
+-- índice GIN para consultas dentro del contenido JSONB de salida_modelo
+CREATE INDEX idx_interacciones_usuario_timestamp
+    ON coach.interacciones (usuario_id, timestamp DESC);
+CREATE INDEX idx_interacciones_salida_modelo_gin
+    ON coach.interacciones USING GIN (salida_modelo);
 
 -- Buenas prácticas adicionales no citadas explícitamente en el documento,
 -- pero recomendables para el resto de claves ajenas del Dataset B

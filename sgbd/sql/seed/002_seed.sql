@@ -104,3 +104,42 @@ INSERT INTO coach.objetivos_financieros (usuario_id, descripcion, importe_objeti
 INSERT INTO coach.recomendaciones (usuario_id, tipo, contenido, estado, confianza_modelo) VALUES
     (1, 'ahorro_sugerido', 'Podrías incrementar tu tasa de ahorro un 5% reduciendo gasto en ocio.', 'aceptada', 0.9200),
     (2, 'alerta_gasto',    'Tu gasto en transporte ha subido un 20% respecto al mes anterior.',      'pendiente', 0.8100);
+
+-- ---------------------------------------------------------------------
+-- INTERACCIONES (Dataset C — un ejemplo por cada uno de los tres modelos
+-- de ML del TFM, replicando los documentos de referencia inicialmente
+-- diseñados para MongoDB y ahora persistidos como JSONB en PostgreSQL)
+-- ---------------------------------------------------------------------
+INSERT INTO coach.interacciones (usuario_id, tipo_interaccion, entrada_usuario, respuesta_mostrada, salida_modelo) VALUES
+    (1, 'prediccion_ahorro',
+     '¿Cuánto podré ahorrar el próximo mes?',
+     'Se estima un ahorro de 420 EUR el próximo mes.',
+     '{
+        "modelo": "regresion_lineal",
+        "prediccion_ahorro_eur": 420.35,
+        "r2": 1.0,
+        "mae_eur": 0,
+        "features_utilizadas": ["salario", "gasto_total", "tasa_ahorro_pct_historica"]
+      }'::jsonb),
+    (1, 'clasificacion_perfil',
+     NULL,
+     'Tu perfil actual es: ahorro_moderado.',
+     '{
+        "modelo": "regresion_logistica",
+        "perfil_predicho": "ahorro_moderado",
+        "accuracy": 0.963,
+        "recall_ahorro_insuficiente": 1.0,
+        "probabilidades": {
+          "buen_ahorrador": 0.18,
+          "ahorro_moderado": 0.71,
+          "ahorro_insuficiente": 0.11
+        }
+      }'::jsonb),
+    (2, 'proyeccion_temporal',
+     'Muéstrame mi proyección de ahorro a 6 meses',
+     'Proyección de ahorro para los próximos 6 meses adjunta.',
+     '{
+        "modelo": "serie_temporal",
+        "horizonte_meses": 6,
+        "proyeccion_eur": [420, 435, 440, 455, 460, 470]
+      }'::jsonb);

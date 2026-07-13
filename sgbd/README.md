@@ -9,18 +9,20 @@ repositorio corresponde a la Asignatura 5 (obtención de datos).
 
 ## 1. Qué contiene esta entrega
 
-En este trabajo implementamos físicamente los Datasets A (A.1 y A.2) y B sobre
-PostgreSQL 16, y documentamos —sin implementarlo en este MVP— el diseño del
-Dataset C sobre MongoDB. Esta carpeta contiene todo lo necesario para levantar
-y evaluar esa implementación en local, sin ninguna dependencia externa:
+En este trabajo implementamos físicamente los tres datasets del TFM (A.1,
+A.2, B y C) sobre una única base PostgreSQL 16. Esta carpeta contiene todo lo
+necesario para levantar y evaluar esa implementación en local, sin ninguna
+dependencia externa:
 
-- La implementación completa del modelo físico (DDL, índices, restricciones)
-- Los datos de ejemplo (seed) y las seis consultas representativas documentadas
+- La implementación completa del modelo físico (DDL, índices, restricciones,
+  incluyendo la persistencia del Dataset C mediante una columna JSONB)
+- Los datos de ejemplo (seed) y las siete consultas representativas
+  documentadas
 - La documentación del modelado de datos, en `docs/`
 - Este README, con instrucciones paso a paso para reproducir el entorno
 
 Antes de entregar este trabajo, probamos el conjunto completo de extremo a
-extremo (esquema, seed y las seis consultas) en un entorno limpio: no se
+extremo (esquema, seed y las siete consultas) en un entorno limpio: no se
 producen errores de sintaxis, todas las restricciones `CHECK` se satisfacen
 con los datos de ejemplo, y la Consulta 5 confirma el comportamiento
 `ON DELETE RESTRICT` esperado. Los pasos siguientes reproducen exactamente esa
@@ -32,23 +34,32 @@ misma verificación.
 .
 ├── docker-compose.yml
 ├── docs/
-│   ├── modelo_conceptual.md            # entidades, claves, reglas de borrado, dominios, tecnología
-│   ├── diagrama_er_corregido.png       # diagrama Entidad-Relación
-│   └── tink_mapping.md                 # mapeo de referencia Open Banking (Tink) — evolución futura, no implementado
-├── sql/
-│   ├── ddl/001_schema.sql              # esquema completo (tablas, CHECK, FK, índices, vista)
-│   ├── seed/002_seed.sql               # datos de ejemplo, listos para las 6 consultas
-│   └── queries/
-│       ├── consultas_representativas.sql   # las 6 consultas del apartado 6, comentadas
-│       └── consulta5_automatica.sql        # Consulta 5 sin marcadores manuales
-└── mongo/
-    └── schema_interacciones.design.js  # esquema de referencia del Dataset C (solo diseño)
+│   ├── modelo_conceptual.md              # entidades, claves, reglas de borrado, dominios, tecnología
+│   ├── diagrama_er_corregido.png         # diagrama Entidad-Relación (con Dataset C integrado)
+│   ├── diagrama_relacional_fisico.png    # diagrama relacional físico (FK, reglas de borrado)
+│   ├── tink_mapping.md                   # mapeo de referencia Open Banking (Tink) — evolución futura, no implementado
+│   ├── diagrama_arquitectura_gcp_redibujado.png  # arquitectura de producción prevista (Google Cloud Platform)
+│   ├── diagrama_roadmap_evolucion.png    # síntesis visual de las líneas de evolución del apartado 7
+│   └── alineacion_jira_asignatura3.md    # correspondencia con el backlog de la Asignatura 3
+└── sql/
+    ├── ddl/001_schema.sql                 # esquema completo (tablas, CHECK, FK, índices, vista)
+    ├── seed/002_seed.sql                  # datos de ejemplo, listos para las 7 consultas
+    └── queries/
+        ├── consultas_representativas.sql  # las 7 consultas del apartado 6, comentadas
+        └── consulta5_automatica.sql       # Consulta 5 sin marcadores manuales
 ```
 
 Para una síntesis del modelo de datos (entidades, claves, reglas de borrado,
 dominios y elección tecnológica) sin necesidad de abrir el documento PDF
 entregado, puede consultarse directamente
 [`docs/modelo_conceptual.md`](./docs/modelo_conceptual.md).
+
+**Convención de nomenclatura:** todos los identificadores del esquema
+(tablas, columnas, restricciones, índices) se escriben en minúsculas y sin
+tildes (por ejemplo, `observaciones_sinteticas`, `pais_id`), siguiendo la
+convención habitual para identificadores SQL en entornos hispanohablantes.
+Esto evita problemas de codificación entre sistemas operativos y no requiere
+entrecomillar los nombres al escribir las consultas.
 
 ## 3. Requisitos previos
 
@@ -136,13 +147,14 @@ Con la extensión PostgreSQL instalada:
    | Base de datos | `afilc` |
    | Tipo de conexión | Standard Connection (sin SSL) |
 
-3. Al finalizar, la conexión debería mostrar el esquema `coach` con las nueve
-   tablas y la vista `v_saldo_usuario`.
+3. Al finalizar, la conexión debería mostrar el esquema `coach` con las diez
+   tablas (incluyendo `interacciones`, con su columna JSONB) y la vista
+   `v_saldo_usuario`.
 4. Antes de ejecutar cualquier consulta, seleccionar esta conexión como activa
    desde la barra de estado inferior de VS Code (donde se indica
    "Select Postgres Server" o el nombre de la conexión ya seleccionada).
 
-## 7. Ejecutar las seis consultas representativas (apartado 6 del trabajo)
+## 7. Ejecutar las siete consultas representativas (apartado 6 del trabajo)
 
 Abrir `sql/queries/consultas_representativas.sql`. Para cada consulta:
 seleccionar el bloque de código correspondiente y ejecutar **"Run Query"**
@@ -155,6 +167,7 @@ seleccionar el bloque de código correspondiente y ejecutar **"Run Query"**
 | 3 — Gasto por categoría y mes | Filas agrupadas por `categoria` y `mes` para el usuario 1 |
 | 4 — Recomendaciones y tasa de aceptación | Historial de recomendaciones, seguido de `tasa_aceptacion_pct` |
 | 6 — Perfil de ahorro por empleo | 3 filas (una por cada perfil laboral presente en el seed) |
+| 7 — Interacciones por modelo de origen (Dataset C) | Historial del usuario 1 con el campo `modelo_origen` extraído del JSONB, seguido de un conteo por modelo (regresión lineal, regresión logística, serie temporal) |
 
 **Consulta 5** requiere una atención particular, porque contiene marcadores
 intencionados (`<usuario_id>`, `<cuenta_id>`) que reproducen la secuencia
@@ -200,17 +213,41 @@ Si se prefiere no usar Docker:
 5. Ejecutar las consultas de la sección 7 con `psql` o pgAdmin, en lugar de la
    extensión de VS Code.
 
-## 10. Sobre el Dataset C (MongoDB)
+## 10. Sobre el Dataset C (interacciones — JSONB sobre PostgreSQL)
 
-`mongo/schema_interacciones.design.js` es documentación de diseño: **no**
-forma parte del código a ejecutar en este MVP, decisión que justificamos en
-el apartado 5.2 del trabajo. El fichero contiene tres documentos de ejemplo
-(uno por cada modelo de machine learning del TFM) y el esquema de validación
-`$jsonSchema` completo, listos para aplicarse cuando incorporemos físicamente
-el contenedor MongoDB, en el sprint posterior a la construcción de la interfaz
-conversacional (apartado 7 del trabajo).
+Persistimos la tabla `interacciones` en la misma base PostgreSQL que el
+resto del modelo, usando una columna `JSONB` (`salida_modelo`) para la parte
+de estructura variable según el modelo de machine learning que genera cada
+interacción, con una restricción `CHECK` declarativa mínima. El detalle de
+esta decisión y su comparación con la alternativa de MongoDB están en el
+apartado 4.3 del documento entregado y en
+[`docs/modelo_conceptual.md`](./docs/modelo_conceptual.md). No introduce
+ninguna dependencia adicional: lo levantamos con el mismo `docker compose up -d`
+que el resto del esquema.
 
-## 11. Resolución de problemas frecuentes
+## 11. Sobre la evolución futura (Open Banking, arquitectura cloud, IA)
+
+Documentamos como referencia, sin implementar en este MVP, tres líneas de
+evolución exploradas junto con el resto del equipo del TFM. Resumimos las
+tres en una única imagen de síntesis,
+[`docs/diagrama_roadmap_evolucion.png`](./docs/diagrama_roadmap_evolucion.png),
+y las detallamos por separado a continuación:
+
+- **Open Banking (Tink):** mapeo de campos de referencia en
+  [`docs/tink_mapping.md`](./docs/tink_mapping.md).
+- **Arquitectura de producción en Google Cloud Platform**, coherente con la
+  Feature 02 del backlog de la Asignatura 3: diagrama en
+  [`docs/diagrama_arquitectura_gcp_redibujado.png`](./docs/diagrama_arquitectura_gcp_redibujado.png).
+- **Rol complementario de Gemini (clasificación NLP) y de los tres modelos de
+  ML propios (motor predictivo)**, ya diferenciados en las historias de
+  usuario US-02 y US-03 del mismo backlog.
+
+El detalle completo de esta correspondencia está en
+[`docs/alineacion_jira_asignatura3.md`](./docs/alineacion_jira_asignatura3.md).
+Ninguna de estas líneas introduce una dependencia externa en el MVP que
+entregamos aquí.
+
+## 12. Resolución de problemas frecuentes
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|

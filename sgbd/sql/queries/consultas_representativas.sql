@@ -122,3 +122,25 @@ SELECT perfil,
 FROM coach.observaciones_sinteticas
 GROUP BY perfil, perfil_ahorro
 ORDER BY perfil, perfil_ahorro;
+
+
+-- =====================================================================
+-- Consulta 7 — Historial de interacciones de un usuario con el modelo
+-- que las generó (Dataset C, columna JSONB)
+-- =====================================================================
+SELECT usuario_id,
+       tipo_interaccion,
+       timestamp,
+       salida_modelo ->> 'modelo' AS modelo_origen,
+       salida_modelo
+FROM coach.interacciones
+WHERE usuario_id = 1
+ORDER BY timestamp DESC;
+
+-- Variante analítica: cuántas interacciones ha generado cada modelo
+-- (agregación directamente sobre el contenido del JSONB)
+SELECT salida_modelo ->> 'modelo' AS modelo_origen,
+       COUNT(*) AS num_interacciones
+FROM coach.interacciones
+GROUP BY salida_modelo ->> 'modelo'
+ORDER BY num_interacciones DESC;
