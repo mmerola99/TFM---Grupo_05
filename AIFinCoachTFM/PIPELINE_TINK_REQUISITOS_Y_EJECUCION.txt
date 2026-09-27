@@ -1,0 +1,106 @@
+PIPELINE_TINK_REQUISITOS_Y_EJECUCION
+
+1. Librerias minimas del pipeline
+
+pandas>=2.0
+numpy>=1.24
+scipy>=1.10
+scikit-learn>=1.4
+
+2. Requisitos previos del entorno
+
+- Python recomendado: 3.11 o superior.
+- No hace falta PostgreSQL para ejecutar este pipeline.
+- No hace falta Streamlit para ejecutar este pipeline.
+- No hace falta Tink real para la corrida base si ya usas los payloads y muestras sinteticas.
+
+3. Que necesito tener instalado
+
+- Python
+- pip
+- un entorno virtual recomendado (.venv)
+
+4. Instalacion sugerida
+
+Windows PowerShell:
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install pandas>=2.0 numpy>=1.24 scipy>=1.10 scikit-learn>=1.4
+
+5. Carpetas necesarias en el repo
+
+- accounts/
+- data/
+- scripts_modificados/
+
+6. Orden de ejecucion recomendado
+
+Paso 1:
+scripts_modificados/01_genera_payloads_tink_sinteticos.py
+
+Paso 2:
+scripts_modificados/02_prepara_transacciones_tink.py
+
+Paso 3:
+scripts_modificados/03_enriquecer_transacciones_tink.py
+
+Paso 4:
+scripts_modificados/04_prepara_dataset_entrenamiento_tink.py
+
+Paso 5:
+scripts_modificados/05_entrena_clasificador_categorias_tink.py
+
+Paso 6 opcional:
+scripts_modificados/06_prepara_usuarios_tink.py
+
+7. Notas de ejecucion
+
+- Si ya tienes los payloads en accounts/synthetic/ puedes empezar en el paso 2.
+- Si ya tienes transacciones_tink.csv puedes empezar en el paso 3.
+- Si ya tienes transacciones_tink_enriched.csv puedes empezar en el paso 4.
+- Si ya tienes transacciones_tink_model_input.csv puedes empezar en el paso 5.
+- El paso 6 no es parte del flujo principal; solo reconstruye una vista mensual por usuario.
+
+8. Estimacion de tiempo por script basada en nuestro historial
+
+Paso 1:
+Tiempo estimado: 10 a 45 minutos
+Observacion: es variable; depende del volumen sintetico que quieras generar. En nuestras corridas fue el paso mas sensible al tamano y por eso se endurecio con checkpoints.
+
+Paso 2:
+Tiempo estimado: 2 a 8 minutos
+Observacion: transforma payloads a tabla canonica y suele ser relativamente rapido.
+
+Paso 3:
+Tiempo estimado: 3 a 10 minutos
+Observacion: aplica enriquecimiento por reglas y agregados por merchant.
+
+Paso 4:
+Tiempo estimado: 4 a 12 minutos
+Observacion: prepara el dataset entrenable, genera review queue y hace el split semantico train/validation/test.
+
+Paso 5:
+Tiempo estimado: 25 a 60 minutos
+Observacion: es el paso mas pesado del flujo principal. En nuestro historial trabajo sobre 1,932,370 filas, con 1,260,717 en train, 276,519 en validation y 395,134 en test. Recorre el dataset por chunks, ajusta scaler, entrena SGDClassifier y luego evalua validation y test.
+
+Paso 6:
+Tiempo estimado: 5 a 15 minutos
+Observacion: es opcional y depende del volumen de transacciones a agregar por usuario y mes.
+
+9. Referencia de volumen validado en nuestro historial
+
+- rows_total: 1932370
+- rows_train: 1260717
+- rows_validation: 276519
+- rows_test: 395134
+- validation_accuracy: 0.7539
+- test_accuracy: 0.2073
+
+10. Riesgos o puntos a vigilar
+
+- Python demasiado viejo puede fallar.
+- Si falta alguna carpeta base, varios scripts no encontraran sus entradas.
+- El paso 5 depende de que el paso 4 haya generado correctamente transacciones_tink_model_input.csv.
+- Si migras de repositorio, no subas .venv; recrea el entorno con estas dependencias.
