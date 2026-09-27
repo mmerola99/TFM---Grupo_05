@@ -1,7 +1,13 @@
 -- =====================================================================
 -- AI Financial Life Coach — Grupo 05
--- Las seis consultas representativas documentadas en el apartado 6
+-- Las siete consultas representativas documentadas en el apartado 6
 -- del trabajo. Ejecutar tras 001_schema.sql y 002_seed.sql.
+--
+-- Esta versión incorpora la corrección de la Consulta 4 solicitada tras
+-- la revisión docente (ver docs/CORRECCIONES_APLICADAS.md, debilidad 3):
+-- la tasa de aceptación de recomendaciones y la conversión a premium se
+-- presentan ahora como dos métricas explícitamente distintas, con una
+-- consulta adicional que aproxima la relación real entre ambas.
 -- =====================================================================
 
 SET search_path TO coach, public;
@@ -25,7 +31,8 @@ ORDER BY o.periodo;
 -- =====================================================================
 -- Consulta 2 — Saldo agregado y movimientos recientes de un usuario
 -- =====================================================================
--- Saldo total del usuario (via vista)
+-- Saldo total del usuario (via vista; saldo_actual de cada cuenta ahora
+-- mantenido automáticamente por trg_actualizar_saldo_cuenta)
 SELECT usuario_id, nombre, saldo_total
 FROM coach.v_saldo_usuario
 WHERE usuario_id = 1;
@@ -56,8 +63,20 @@ ORDER BY mes, total_categoria;
 
 
 -- =====================================================================
--- Consulta 4 — Historial de recomendaciones y tasa de aceptación
+-- Consulta 4 — Historial de recomendaciones, tasa de aceptación y
+-- aproximación a la conversión a premium (CORREGIDA)
+--
+-- NOTA METODOLÓGICA (corrección de la debilidad docente): la tasa de
+-- aceptación mide cuántas recomendaciones emitidas fueron aceptadas por
+-- el usuario. NO mide cuántos usuarios contratan el plan premium: un
+-- usuario puede aceptar recomendaciones sin ser premium (ver el
+-- usuario 2 en el seed, plan 'free', con una recomendación aceptada), o
+-- ser premium sin haber aceptado ninguna. Se presentan ambas métricas
+-- por separado y se añade una tercera consulta que aproxima la relación
+-- real entre aceptar recomendaciones y convertir a premium, hasta que
+-- se documente una relación causal explícita entre ambos eventos.
 -- =====================================================================
+
 -- Historial de un usuario concreto
 SELECT fecha_emision, tipo, estado,
        confianza_modelo, contenido
@@ -65,12 +84,31 @@ FROM coach.recomendaciones
 WHERE usuario_id = 1
 ORDER BY fecha_emision DESC;
 
--- Tasa de aceptación global (proxy de conversión)
+-- 4.a — Tasa de aceptación de recomendaciones (NO es la tasa de
+-- conversión a premium; ver nota metodológica más arriba)
 SELECT ROUND(
     COUNT(*) FILTER (WHERE estado = 'aceptada')::NUMERIC
     / NULLIF(COUNT(*), 0) * 100, 1
 ) AS tasa_aceptacion_pct
 FROM coach.recomendaciones;
+
+-- 4.b — Aproximación a la conversión real a premium: de los usuarios
+-- que han aceptado al menos una recomendación, qué porcentaje tiene
+-- efectivamente el plan premium hoy. Es una aproximación (no prueba
+-- causalidad ni orden temporal aceptación->conversión), pero permite
+-- contrastar la tasa de aceptación con un indicador ligado al negocio.
+SELECT
+    COUNT(*) FILTER (WHERE u.plan = 'premium') AS usuarios_premium,
+    COUNT(*) AS usuarios_con_alguna_aceptacion,
+    ROUND(
+        COUNT(*) FILTER (WHERE u.plan = 'premium')::NUMERIC
+        / NULLIF(COUNT(*), 0) * 100, 1
+    ) AS conversion_aproximada_pct
+FROM coach.usuarios u
+WHERE EXISTS (
+    SELECT 1 FROM coach.recomendaciones r
+    WHERE r.usuario_id = u.usuario_id AND r.estado = 'aceptada'
+);
 
 
 -- =====================================================================
@@ -83,7 +121,9 @@ FROM coach.recomendaciones;
 -- este fichero completo de una sola vez, estas líneas fallarán con un
 -- error de sintaxis "at or near <" — es el comportamiento esperado.
 -- Para una comprobación automática de un solo golpe, usar en su lugar
--- consulta5_automatica.sql, que hace exactamente lo mismo sin marcadores.
+-- consulta5_automatica.sql, que hace exactamente lo mismo sin marcadores
+-- y además demuestra la corrección de la debilidad docente nº 2
+-- (derecho de supresión mediante anonimización).
 -- =====================================================================
 -- 1. Crear usuario de prueba
 INSERT INTO coach.usuarios (email, nombre, plan)
@@ -97,10 +137,16 @@ VALUES (<usuario_id>, 'corriente')
 RETURNING cuenta_id;                                -- anotar el cuenta_id devuelto, p.ej. 4
 
 --    (sustituir <cuenta_id> por el valor devuelto en el paso anterior)
+--    Importe en positivo: con el trigger de saldo activo, una cuenta
+--    'corriente' recién creada (saldo 0) no admite un cargo que la
+--    deje en descubierto (chk_saldo_no_negativo).
 INSERT INTO coach.transacciones (cuenta_id, importe, categoria)
-VALUES (<cuenta_id>, -10.00, 'ocio');
+VALUES (<cuenta_id>, 50.00, 'ingresos');
 
--- 3. Intentar borrar el usuario (debe fallar por ON DELETE RESTRICT)
+-- 3. Intentar borrar físicamente el usuario (debe fallar por ON DELETE
+--    RESTRICT: esto sigue siendo así deliberadamente, es la salvaguarda
+--    frente a un borrado físico accidental, NO el mecanismo de
+--    supresión a disposición del usuario final — ver paso 4)
 DELETE FROM coach.usuarios WHERE usuario_id = <usuario_id>;
 
 -- RESULTADO ESPERADO:
@@ -108,6 +154,17 @@ DELETE FROM coach.usuarios WHERE usuario_id = <usuario_id>;
 -- constraint "transacciones_cuenta_id_fkey" on table "transacciones"
 -- La operación se bloquea por ON DELETE RESTRICT en cuentas->transacciones,
 -- evitando la eliminación silenciosa del historial de auditoría.
+
+-- 4. La vía correcta para que el usuario ejerza su derecho de
+--    supresión es la anonimización, que SÍ conserva el historial
+--    financiero íntegro (corrección de la debilidad docente nº 2):
+SELECT coach.anonimizar_usuario(<usuario_id>);
+
+-- Comprobación: los datos personales quedan anonimizados, pero cuentas
+-- y transacciones del usuario siguen intactas.
+SELECT usuario_id, email, nombre, eliminado_en
+FROM coach.usuarios
+WHERE usuario_id = <usuario_id>;
 
 
 -- =====================================================================
@@ -144,3 +201,4 @@ SELECT salida_modelo ->> 'modelo' AS modelo_origen,
 FROM coach.interacciones
 GROUP BY salida_modelo ->> 'modelo'
 ORDER BY num_interacciones DESC;
+--

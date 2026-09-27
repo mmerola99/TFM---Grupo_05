@@ -93,3 +93,6 @@ streamlit run app.py --server.port 8080
 
 Los datos y modelos obtenidos constituyen la base del TFM:  
 **"AI Financial Life Coach — Plataforma de gestión financiera personal con ML para el mercado español"**
+
+## Trabajo SGBD (Asignatura 6)
+Ver [`sgbd/README.md`](./sgbd/README.md) para el diseño e implementación de la capa de persistencia del TFM.

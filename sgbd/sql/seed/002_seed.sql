@@ -2,6 +2,15 @@
 -- AI Financial Life Coach — Grupo 05
 -- Datos de ejemplo (seed) para validar el esquema completo en local,
 -- sin necesidad de conectarse a las API/fuentes externas (apartado 5).
+--
+-- CORRECCIÓN (debilidad docente — sincronización de saldo_actual):
+-- las cuentas ya no insertan un saldo_actual manual y potencialmente
+-- inconsistente con el histórico. Se insertan con saldo 0 y se añade,
+-- para cada cuenta, una transacción de "saldo inicial" seguida de sus
+-- movimientos; el trigger trg_actualizar_saldo_cuenta (001_schema.sql)
+-- recalcula saldo_actual automáticamente a partir de esas transacciones,
+-- de modo que los saldos finales (2.450,00 / 8.200,00 / 640,00 €) son
+-- ahora una consecuencia del histórico, no un valor introducido aparte.
 -- =====================================================================
 
 SET search_path TO coach, public;
@@ -71,23 +80,37 @@ INSERT INTO coach.usuarios (email, nombre, plan, pais_id) VALUES
 
 -- ---------------------------------------------------------------------
 -- CUENTA
+-- saldo_actual arranca en su valor DEFAULT (0): lo fija el trigger
+-- trg_actualizar_saldo_cuenta en cuanto se insertan las transacciones
+-- de más abajo (empezando por la de "saldo inicial" de cada cuenta).
 -- ---------------------------------------------------------------------
-INSERT INTO coach.cuentas (usuario_id, tipo_cuenta, moneda, saldo_actual) VALUES
-    (1, 'corriente', 'EUR', 2450.00),
-    (1, 'ahorro',    'EUR', 8200.00),
-    (2, 'corriente', 'EUR', 640.00);
+INSERT INTO coach.cuentas (usuario_id, tipo_cuenta, moneda) VALUES
+    (1, 'corriente', 'EUR'),
+    (1, 'ahorro',    'EUR'),
+    (2, 'corriente', 'EUR');
 
 -- ---------------------------------------------------------------------
 -- TRANSACCION (cubre las 10 categorías del dominio corregido)
+-- Cada cuenta arranca con una transacción de "saldo inicial" (categoría
+-- 'ingresos') para que el saldo final, mantenido por el trigger, sea
+-- idéntico al de la entrega anterior (2.450,00 / 8.200,00 / 640,00 €) y
+-- quede ahora demostrado como consecuencia del histórico completo, no
+-- como un valor aparte.
 -- ---------------------------------------------------------------------
 INSERT INTO coach.transacciones (cuenta_id, fecha, importe, categoria, descripcion) VALUES
+    -- Cuenta 1 (corriente, usuario 1) — saldo inicial 1.575,00 + movimientos = 2.450,00
+    (1, now() - interval '90 days', 1575.00, 'ingresos',     'Saldo inicial de la cuenta'),
     (1, now() - interval '30 days', -750.00, 'vivienda',     'Alquiler mensual'),
     (1, now() - interval '28 days', -180.00, 'alimentacion', 'Supermercado'),
     (1, now() - interval '20 days',  -35.00, 'ocio',         'Cine y cena'),
     (1, now() - interval '15 days',  -60.00, 'transporte',   'Abono transporte'),
     (1, now() - interval '10 days', 2200.00, 'ingresos',     'Nómina mensual'),
     (1, now() - interval '9 days',  -300.00, 'ahorro',       'Transferencia a cuenta de ahorro'),
+    -- Cuenta 2 (ahorro, usuario 1) — saldo inicial 7.900,00 + movimientos = 8.200,00
+    (2, now() - interval '90 days', 7900.00, 'ingresos',     'Saldo inicial de la cuenta'),
     (2, now() - interval '9 days',   300.00, 'transferencia','Recepción desde cuenta corriente'),
+    -- Cuenta 3 (corriente, usuario 2) — saldo inicial 805,00 + movimientos = 640,00
+    (3, now() - interval '90 days',  805.00, 'ingresos',     'Saldo inicial de la cuenta'),
     (3, now() - interval '5 days',   -45.00, 'salud',        'Farmacia'),
     (3, now() - interval '2 days',  -120.00, 'educacion',    'Curso online');
 
@@ -100,10 +123,17 @@ INSERT INTO coach.objetivos_financieros (usuario_id, descripcion, importe_objeti
 
 -- ---------------------------------------------------------------------
 -- RECOMENDACION
+-- Se añade una tercera recomendación aceptada por el usuario 2 (plan
+-- 'free'), para que la Consulta 4 corregida pueda mostrar un caso en
+-- el que aceptar una recomendación NO coincide con tener plan premium
+-- (usuario 1 sí es premium y ha aceptado; usuario 2 es free y también
+-- ha aceptado), evidenciando por qué ambas métricas no deben
+-- confundirse.
 -- ---------------------------------------------------------------------
 INSERT INTO coach.recomendaciones (usuario_id, tipo, contenido, estado, confianza_modelo) VALUES
     (1, 'ahorro_sugerido', 'Podrías incrementar tu tasa de ahorro un 5% reduciendo gasto en ocio.', 'aceptada', 0.9200),
-    (2, 'alerta_gasto',    'Tu gasto en transporte ha subido un 20% respecto al mes anterior.',      'pendiente', 0.8100);
+    (2, 'alerta_gasto',    'Tu gasto en transporte ha subido un 20% respecto al mes anterior.',      'pendiente', 0.8100),
+    (2, 'ahorro_sugerido', 'Podrías abrir una cuenta de ahorro para separar tu fondo de vacaciones.', 'aceptada', 0.7600);
 
 -- ---------------------------------------------------------------------
 -- INTERACCIONES (Dataset C — un ejemplo por cada uno de los tres modelos

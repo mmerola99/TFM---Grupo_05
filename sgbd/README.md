@@ -7,6 +7,15 @@ Data & Business Intelligence, Next Educación
 [TFM---Grupo_05](https://github.com/mmerola99/TFM---Grupo_05); el resto del
 repositorio corresponde a la Asignatura 5 (obtención de datos).
 
+> **Esta versión incorpora las correcciones solicitadas tras la revisión
+> docente de la Asignatura 6** (nota: 8,55/10). El detalle completo de cada
+> corrección está en
+> [`docs/CORRECCIONES_APLICADAS.md`](./docs/CORRECCIONES_APLICADAS.md); en
+> resumen: cardinalidad del diagrama E/R corregida, derecho de supresión
+> resuelto mediante anonimización, distinción explícita entre tasa de
+> aceptación y conversión a premium, y sincronización de `saldo_actual`
+> mediante trigger.
+
 ## 1. Qué contiene esta entrega
 
 En este trabajo implementamos físicamente los tres datasets del TFM (A.1,
@@ -24,9 +33,9 @@ dependencia externa:
 Antes de entregar este trabajo, probamos el conjunto completo de extremo a
 extremo (esquema, seed y las siete consultas) en un entorno limpio: no se
 producen errores de sintaxis, todas las restricciones `CHECK` se satisfacen
-con los datos de ejemplo, y la Consulta 5 confirma el comportamiento
-`ON DELETE RESTRICT` esperado. Los pasos siguientes reproducen exactamente esa
-misma verificación.
+con los datos de ejemplo, y la Consulta 5 confirma tanto el bloqueo del
+borrado físico como la anonimización correcta. Los pasos siguientes
+reproducen exactamente esa misma verificación.
 
 ## 2. Estructura del repositorio
 
@@ -34,19 +43,20 @@ misma verificación.
 .
 ├── docker-compose.yml
 ├── docs/
+│   ├── CORRECCIONES_APLICADAS.md         # detalle de las 6 correcciones docentes aplicadas
 │   ├── modelo_conceptual.md              # entidades, claves, reglas de borrado, dominios, tecnología
-│   ├── diagrama_er_corregido.png         # diagrama Entidad-Relación (con Dataset C integrado)
+│   ├── diagrama_er_corregido.png         # diagrama Entidad-Relación (cardinalidad corregida)
 │   ├── diagrama_relacional_fisico.png    # diagrama relacional físico (FK, reglas de borrado)
 │   ├── tink_mapping.md                   # mapeo de referencia Open Banking (Tink) — evolución futura, no implementado
 │   ├── diagrama_arquitectura_gcp_redibujado.png  # arquitectura de producción prevista (Google Cloud Platform)
 │   ├── diagrama_roadmap_evolucion.png    # síntesis visual de las líneas de evolución del apartado 7
 │   └── alineacion_jira_asignatura3.md    # correspondencia con el backlog de la Asignatura 3
 └── sql/
-    ├── ddl/001_schema.sql                 # esquema completo (tablas, CHECK, FK, índices, vista)
+    ├── ddl/001_schema.sql                 # esquema completo (tablas, CHECK, FK, índices, vista, trigger de saldo, anonimizar_usuario)
     ├── seed/002_seed.sql                  # datos de ejemplo, listos para las 7 consultas
     └── queries/
         ├── consultas_representativas.sql  # las 7 consultas del apartado 6, comentadas
-        └── consulta5_automatica.sql       # Consulta 5 sin marcadores manuales
+        └── consulta5_automatica.sql       # Consulta 5 sin marcadores manuales (bloqueo + anonimización)
 ```
 
 Para una síntesis del modelo de datos (entidades, claves, reglas de borrado,
@@ -163,25 +173,34 @@ seleccionar el bloque de código correspondiente y ejecutar **"Run Query"**
 | Consulta | Resultado esperado |
 |---|---|
 | 1 — Serie temporal IPC | 3 filas (periodos 2022, 2023, 2024) con `pais`, `indicador`, `periodo`, `valor` |
-| 2 — Saldo y movimientos | Una fila con el saldo total del usuario 1, seguida de sus últimos movimientos |
+| 2 — Saldo y movimientos | Una fila con el saldo total del usuario 1 (mantenido automáticamente por el trigger `trg_actualizar_saldo_cuenta`), seguida de sus últimos movimientos |
 | 3 — Gasto por categoría y mes | Filas agrupadas por `categoria` y `mes` para el usuario 1 |
-| 4 — Recomendaciones y tasa de aceptación | Historial de recomendaciones, seguido de `tasa_aceptacion_pct` |
+| 4 — Recomendaciones, tasa de aceptación y conversión aproximada | Tres resultados: (i) historial de recomendaciones del usuario 1; (ii) **4.a** `tasa_aceptacion_pct` (66,7 % con el seed actual); (iii) **4.b** `conversion_aproximada_pct` (50,0 % con el seed actual) — corrección de la debilidad docente n.º 3: ambas métricas se presentan por separado, ya que no son intercambiables (ver `docs/CORRECCIONES_APLICADAS.md`) |
 | 6 — Perfil de ahorro por empleo | 3 filas (una por cada perfil laboral presente en el seed) |
 | 7 — Interacciones por modelo de origen (Dataset C) | Historial del usuario 1 con el campo `modelo_origen` extraído del JSONB, seguido de un conteo por modelo (regresión lineal, regresión logística, serie temporal) |
 
 **Consulta 5** requiere una atención particular, porque contiene marcadores
 intencionados (`<usuario_id>`, `<cuenta_id>`) que reproducen la secuencia
-manual descrita en el trabajo:
+manual descrita en el trabajo, y ahora incluye también la corrección del
+derecho de supresión (debilidad docente n.º 2):
 
 - **Paso a paso:** ejecutar el primer `INSERT ... RETURNING`, anotar el
   `usuario_id` devuelto, sustituirlo donde aparece `<usuario_id>`, repetir con
-  `<cuenta_id>`, y finalmente ejecutar el `DELETE`. El resultado esperado es un
+  `<cuenta_id>`, y ejecutar el `DELETE`. El resultado esperado es un
   error de violación de clave foránea, que demuestra que `ON DELETE RESTRICT`
-  bloquea correctamente el borrado.
+  bloquea correctamente el borrado físico (salvaguarda frente a un borrado
+  accidental del historial). A continuación, ejecutar
+  `SELECT coach.anonimizar_usuario(<usuario_id>);` y la consulta de
+  comprobación siguiente: el `email` y el `nombre` quedan anonimizados,
+  `eliminado_en` queda con la fecha actual, y las cuentas/transacciones del
+  usuario permanecen intactas — esta es la vía real por la que el usuario
+  ejerce su derecho de supresión.
 - **Automática:** ejecutar en su lugar
-  `sql/queries/consulta5_automatica.sql`, que reproduce la misma secuencia sin
-  marcadores manuales y finaliza con el mensaje
-  `NOTICE: OK: el borrado se ha bloqueado correctamente por ON DELETE RESTRICT (cuentas -> transacciones)`.
+  `sql/queries/consulta5_automatica.sql`, que reproduce la misma secuencia
+  sin marcadores manuales y finaliza con tres avisos `NOTICE`: el borrado
+  físico bloqueado (parte A), la anonimización aplicada correctamente
+  conservando cuentas y transacciones (parte B), y el rechazo de una
+  segunda anonimización del mismo usuario (parte C).
 
 ## 8. Detener o reiniciar el entorno
 
@@ -247,11 +266,20 @@ El detalle completo de esta correspondencia está en
 Ninguna de estas líneas introduce una dependencia externa en el MVP que
 entregamos aquí.
 
-## 12. Resolución de problemas frecuentes
+## 12. Correcciones aplicadas tras la revisión docente
+
+Esta entrega incorpora las correcciones solicitadas tras la evaluación de la
+Asignatura 6 (nota: 8,55/10). El resumen debilidad por debilidad —
+incluyendo cuál de las seis observaciones queda pendiente de aplicar en el
+documento PDF principal, fuera del alcance de esta carpeta `sgbd/` — está en
+[`docs/CORRECCIONES_APLICADAS.md`](./docs/CORRECCIONES_APLICADAS.md).
+
+## 13. Resolución de problemas frecuentes
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
 | `docker compose up -d` no responde o el contenedor no arranca | Docker Desktop no está iniciado, o el motor WSL2 no ha arrancado | Abrir Docker Desktop y esperar a que indique "running" antes de repetir el comando |
 | VS Code muestra "No PostgreSQL Server or Database selected" al ejecutar una consulta | El fichero `.sql` no tiene una conexión activa asociada | Seleccionar la conexión desde la barra de estado inferior antes de ejecutar |
 | Error `syntax error at or near "<"` al ejecutar todo el fichero de consultas de una vez | Es el comportamiento esperado en la Consulta 5 (ver sección 7) | Ejecutar `consulta5_automatica.sql` en su lugar, o sustituir los marcadores manualmente |
+| Error de violación de `chk_saldo_no_negativo` al probar una transacción de importe negativo sobre una cuenta recién creada | Con el trigger de saldo activo, una cuenta `corriente`/`ahorro` recién creada (saldo 0) no admite un cargo que la deje en descubierto | Probar con un importe positivo (`'ingresos'`) para dejar saldo disponible, o usar una cuenta `tarjeta_credito` (única que admite saldo negativo) |
 | `docker compose ps` muestra el contenedor en estado `starting` de forma prolongada | Puede haberse producido un conflicto con el puerto 5432 si ya hay otro PostgreSQL escuchando en local | Detener el otro servicio PostgreSQL, o cambiar el puerto expuesto en `docker-compose.yml` |

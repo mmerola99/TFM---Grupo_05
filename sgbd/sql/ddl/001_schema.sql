@@ -5,6 +5,19 @@
 -- (version corregida: todas las entidades son entidades fuertes con
 -- clave primaria propia; la dependencia existencial se materializa
 -- mediante FK obligatoria + regla de borrado, no mediante clave parcial).
+--
+-- ESTA VERSIÓN incorpora las correcciones solicitadas tras la evaluación
+-- docente de la entrega anterior (ver docs/CORRECCIONES_APLICADAS.md):
+--   1. Cardinalidades del diagrama E/R corregidas (docs/diagrama_er_corregido.png)
+--   2. Mecanismo de anonimización para el derecho de supresión del usuario
+--      (función coach.anonimizar_usuario), sin alterar las reglas CASCADE/
+--      RESTRICT que protegen la integridad del historial financiero
+--   3. Consulta 4 separa explícitamente aceptación de recomendaciones y
+--      conversión a premium (ver sql/queries/consultas_representativas.sql)
+--   4. Trigger que mantiene cuentas.saldo_actual sincronizado con
+--      transacciones, documentando el mecanismo antes ausente
+--   6. Comentario de observaciones_sinteticas corregido (17+1=18 columnas,
+--      no 18 en el script de origen)
 -- =====================================================================
 
 CREATE SCHEMA IF NOT EXISTS coach;
@@ -49,7 +62,14 @@ CREATE TABLE coach.observaciones_macro (
 
 -- ---------------------------------------------------------------------
 -- OBSERVACION_SINTETICA (entidad fuerte y aislada — Dataset A.2)
--- Replica fielmente las 18 columnas de 02_api/genera_dataset_sintetico.py.
+-- Replica fielmente las 17 columnas originales de
+-- 02_api/genera_dataset_sintetico.py (user_id, fecha, edad, perfil,
+-- salario, vivienda, alimentacion, transporte, ocio, salud, educacion,
+-- otros, gasto_total, ahorro, tasa_ahorro_pct, perfil_ahorro,
+-- ipc_mensual), más el identificador sustituto registro_id añadido en
+-- este modelo físico (17 + 1 = 18 columnas en total). Se deja explícito
+-- para no reproducir la ambigüedad "18 vs 19" señalada en la revisión
+-- docente de la Asignatura 6.
 -- Dominios y rangos verificados contra el trabajo de la Asignatura 5
 -- "Obtención de Datos para el TFM" (tabla de variables, apartado 4.4).
 -- Sin FK hacia USUARIO: user_id es un identificador de simulación, no
@@ -99,6 +119,10 @@ CREATE TABLE coach.observaciones_sinteticas (
 
 -- ---------------------------------------------------------------------
 -- USUARIO (entidad fuerte)
+-- Añadimos eliminado_en para soportar el derecho de supresión mediante
+-- anonimización (ver función coach.anonimizar_usuario más abajo), en
+-- lugar de un DELETE físico que entra en conflicto con la conservación
+-- del historial financiero exigida por la Consulta 5.
 -- ---------------------------------------------------------------------
 CREATE TABLE coach.usuarios (
     usuario_id   SERIAL PRIMARY KEY,
@@ -106,11 +130,17 @@ CREATE TABLE coach.usuarios (
     nombre       VARCHAR(150) NOT NULL,
     fecha_alta   TIMESTAMP NOT NULL DEFAULT now(),
     plan         VARCHAR(20) NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'premium')),
-    pais_id      INTEGER REFERENCES coach.paises(pais_id) ON DELETE RESTRICT
+    pais_id      INTEGER REFERENCES coach.paises(pais_id) ON DELETE RESTRICT,
+    eliminado_en TIMESTAMP
 );
 
 -- ---------------------------------------------------------------------
 -- CUENTA (entidad fuerte, dependencia existencial de USUARIO — (1,1))
+-- saldo_actual es una columna desnormalizada por rendimiento (evita
+-- recalcular SUM(transacciones.importe) en cada consulta de saldo);
+-- su sincronización queda garantizada por el trigger
+-- trg_actualizar_saldo_cuenta definido más abajo, no por disciplina de
+-- aplicación.
 -- ---------------------------------------------------------------------
 CREATE TABLE coach.cuentas (
     cuenta_id      SERIAL PRIMARY KEY,
@@ -253,3 +283,95 @@ SELECT u.usuario_id,
 FROM coach.usuarios u
 LEFT JOIN coach.cuentas c ON c.usuario_id = u.usuario_id
 GROUP BY u.usuario_id, u.nombre;
+
+-- =====================================================================
+-- CORRECCIÓN 4 (debilidad docente): sincronización de cuentas.saldo_actual
+--
+-- Antes: saldo_actual se escribía manualmente en el INSERT/UPDATE de
+-- cuentas, sin ningún mecanismo que lo mantuviera coherente con el
+-- histórico real de transacciones (podían coexistir dos
+-- representaciones contradictorias del saldo, tal como señaló la
+-- revisión docente).
+--
+-- Ahora: cada INSERT, UPDATE o DELETE sobre transacciones dispara un
+-- recálculo completo de saldo_actual para la(s) cuenta(s) afectada(s),
+-- a partir de SUM(transacciones.importe). saldo_actual sigue siendo una
+-- columna desnormalizada (por rendimiento de lectura, apartado 5), pero
+-- su valor es ahora siempre una función determinista del histórico de
+-- transacciones, nunca un dato introducido de forma independiente.
+-- =====================================================================
+CREATE OR REPLACE FUNCTION coach.fn_actualizar_saldo_cuenta()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_cuenta_id INTEGER;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        v_cuenta_id := OLD.cuenta_id;
+    ELSE
+        v_cuenta_id := NEW.cuenta_id;
+    END IF;
+
+    UPDATE coach.cuentas
+    SET saldo_actual = COALESCE(
+        (SELECT SUM(importe) FROM coach.transacciones WHERE cuenta_id = v_cuenta_id),
+        0
+    )
+    WHERE cuenta_id = v_cuenta_id;
+
+    -- Si un UPDATE reasigna la transacción a otra cuenta, recalculamos
+    -- también la cuenta de origen para no dejarla con un saldo obsoleto.
+    IF TG_OP = 'UPDATE' AND OLD.cuenta_id IS DISTINCT FROM NEW.cuenta_id THEN
+        UPDATE coach.cuentas
+        SET saldo_actual = COALESCE(
+            (SELECT SUM(importe) FROM coach.transacciones WHERE cuenta_id = OLD.cuenta_id),
+            0
+        )
+        WHERE cuenta_id = OLD.cuenta_id;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_actualizar_saldo_cuenta
+    AFTER INSERT OR UPDATE OR DELETE ON coach.transacciones
+    FOR EACH ROW EXECUTE FUNCTION coach.fn_actualizar_saldo_cuenta();
+
+-- =====================================================================
+-- CORRECCIÓN 2 (debilidad docente): derecho de supresión del usuario
+-- conservando el historial financiero
+--
+-- Antes: la única vía documentada para "eliminar" un usuario era un
+-- DELETE físico sobre coach.usuarios, que la Consulta 5 demostraba
+-- correctamente bloqueado por ON DELETE RESTRICT (cuentas ->
+-- transacciones) en cuanto existía algún movimiento. Esto protegía el
+-- historial, pero dejaba sin resolver la propia historia de usuario:
+-- el usuario no podía ejercer su derecho de supresión de ninguna forma.
+--
+-- Ahora: coach.anonimizar_usuario() implementa el derecho de supresión
+-- mediante anonimización (borrado lógico de datos personales), en línea
+-- con la práctica habitual bajo RGPD cuando existe una obligación legal
+-- de conservar registros financieros: se sobrescriben los datos
+-- identificativos (email, nombre) y se marca eliminado_en, sin borrar
+-- ni las cuentas ni las transacciones ni el resto del historial. Las
+-- reglas CASCADE/RESTRICT existentes se mantienen sin cambios: siguen
+-- siendo la salvaguarda correcta para un DELETE físico completo (por
+-- ejemplo, purgar una cuenta de prueba sin datos reales), mientras que
+-- anonimizar_usuario() es la vía correcta para el caso de uso real de
+-- "un usuario ejerce su derecho de supresión".
+-- =====================================================================
+CREATE OR REPLACE FUNCTION coach.anonimizar_usuario(p_usuario_id INTEGER)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE coach.usuarios
+    SET email        = 'eliminado+' || p_usuario_id || '@anon.local',
+        nombre       = 'Usuario eliminado',
+        eliminado_en = now()
+    WHERE usuario_id = p_usuario_id
+      AND eliminado_en IS NULL;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Usuario % no existe o ya había sido anonimizado previamente', p_usuario_id;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
