@@ -1,6 +1,5 @@
-# AI Financial Life Coach — Obtención de Datos para el TFM
+# AI Financial Life Coach — Repositorio del TFM (Grupo 05)
 
-**Asignatura 5: Obtención de Datos para el TFM**  
 **Máster en Big Data y Business Intelligence — Next Educación**
 
 **Equipo:** Carlos Alfonso Cuaya Xinto · Cinthya Solis Meza · Jorge Manuel Caceres Mondragon · Marco Merola · Miguel Angel Lozano Torres
@@ -26,6 +25,8 @@ Los datos han sido recopilados mediante dos vías obligatorias (API y web scrapi
 | `04_eda/analisis_exploratorio.py` | Análisis exploratorio con 5 visualizaciones |
 | `05_modelos/modelos_predictivos.py` | 3 modelos de ML (Regresión Lineal, Logística, Serie temporal) |
 | `05_streamlit/app.py` | Dashboard predictivo interactivo con simulador |
+| `sgbd/` | Diseño de persistencia y correcciones de la Asignatura 6 (modelo ER, mecanismo de anonimización, trigger de saldo) |
+| `AIFinCoachTFM/scripts_modificados/` | Pipeline de integración con Open Banking (Tink) desarrollada por el equipo para la Asignatura 7: generación de payloads sintéticos con estructura Tink, enriquecimiento y clasificación de transacciones, preparación del dataset de usuarios |
 | `data/raw/` | CSV de datos originales sin procesar |
 | `data/clean/` | Dataset limpio + gráficos PNG + métricas JSON |             ← Dataset limpio + gráficos + métricas
 ---
@@ -96,3 +97,13 @@ Los datos y modelos obtenidos constituyen la base del TFM:
 
 ## Trabajo SGBD (Asignatura 6)
 Ver [`sgbd/README.md`](./sgbd/README.md) para el diseño e implementación de la capa de persistencia del TFM.
+
+---
+
+## Actualizaciones recientes
+
+- **Asignatura 6 (BBDD):** se corrigieron las debilidades señaladas por el docente sobre el diseño de persistencia (cardinalidad del modelo ER, mecanismo de anonimización para el derecho de supresión, sincronización del saldo, entre otras). Detalle completo en `sgbd/docs/CORRECCIONES_APLICADAS.md`.
+- **Asignatura 7 (modelado predictivo):** se revisó `05_modelos/modelos_predictivos.py` para eliminar un problema de fuga de información (los modelos usaban variables del mismo mes que determinan algebraicamente el ahorro) y se reformuló el problema en términos temporales, con partición de train/test por usuario. Se añadieron además una proyección individual por usuario y una capa prescriptiva que recomienda ajustes de gasto concretos.
+- **Integración de la pipeline Tink (Jorge):** el trabajo desarrollado sobre el sandbox de Tink se ha incorporado a este repositorio bajo `AIFinCoachTFM/`.
+
+**Nota sobre datos no versionados:** la carpeta `AIFinCoachTFM/accounts/` (payloads sintéticos generados a partir de muestras reales del sandbox de Tink) no se ha incluido en este repositorio por su volumen (más de 100.000 archivos). Estos datos son regenerables ejecutando `AIFinCoachTFM/scripts_modificados/01_genera_payloads_tink_sinteticos.py`, y la copia completa permanece disponible para consulta del equipo.
