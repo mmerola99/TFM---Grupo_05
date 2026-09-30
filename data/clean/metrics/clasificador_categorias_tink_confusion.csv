@@ -1,0 +1,15 @@
+,cash_withdrawal,debt_credit,dining,entertainment,groceries,health,housing,income_interest,income_salary,income_transfer,insurance,shopping,subscriptions,transport
+cash_withdrawal,4728,0,0,0,0,0,0,0,0,0,0,0,0,0
+debt_credit,0,169,0,0,0,0,0,0,9,0,0,0,0,0
+dining,0,0,161448,0,0,0,0,0,0,0,0,0,0,0
+entertainment,0,0,0,382,0,0,0,0,0,0,0,0,0,0
+groceries,0,0,0,0,28367,0,0,0,0,0,0,0,0,0
+health,0,0,0,0,0,2072,0,0,0,0,0,0,0,0
+housing,0,0,0,0,0,0,8993,0,0,0,0,0,0,0
+income_interest,0,0,0,0,0,0,0,14982,0,0,0,0,0,0
+income_salary,0,0,0,0,0,0,0,0,57624,0,0,0,0,0
+income_transfer,0,0,0,0,0,0,0,0,0,4949,0,0,0,0
+insurance,0,0,0,0,0,0,0,0,0,0,2122,0,0,0
+shopping,0,0,0,0,0,0,0,0,0,0,0,30772,0,0
+subscriptions,0,0,0,0,0,0,0,0,0,0,0,0,38062,0
+transport,0,0,0,0,0,0,0,0,0,0,0,0,0,7696

@@ -1,0 +1,234 @@
+{
+  "input_path": "/home/claude/tink_dataset/data/clean/transacciones_tink_model_input.csv",
+  "min_class_support": 5,
+  "max_text_features": 500,
+  "min_merchant_support": 20,
+  "chunk_size": 50000,
+  "categorical_hash_features": 32768,
+  "epochs": 1,
+  "rows_total": 2388628,
+  "rows_train": 1657944,
+  "rows_validation": 368309,
+  "rows_test": 362375,
+  "classes": [
+    "cash_withdrawal",
+    "debt_credit",
+    "dining",
+    "entertainment",
+    "groceries",
+    "health",
+    "housing",
+    "income_interest",
+    "income_salary",
+    "income_transfer",
+    "insurance",
+    "shopping",
+    "subscriptions",
+    "transport"
+  ],
+  "validation_accuracy": 1.0,
+  "test_accuracy": 1.0,
+  "validation_report": {
+    "cash_withdrawal": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4509.0
+    },
+    "debt_credit": {
+      "precision": 1.0,
+      "recall": 0.9829545454545454,
+      "f1-score": 0.9914040114613181,
+      "support": 176.0
+    },
+    "dining": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 163979.0
+    },
+    "entertainment": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 308.0
+    },
+    "groceries": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 28282.0
+    },
+    "health": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 2126.0
+    },
+    "housing": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 9156.0
+    },
+    "income_interest": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 14846.0
+    },
+    "income_salary": {
+      "precision": 0.9999497605251699,
+      "recall": 1.0,
+      "f1-score": 0.999974879631568,
+      "support": 59711.0
+    },
+    "income_transfer": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4680.0
+    },
+    "insurance": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 2245.0
+    },
+    "shopping": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 30042.0
+    },
+    "subscriptions": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 40174.0
+    },
+    "transport": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 8075.0
+    },
+    "accuracy": 0.9999918546655119,
+    "macro avg": {
+      "precision": 0.9999964114660835,
+      "recall": 0.9987824675324675,
+      "f1-score": 0.9993842065066347,
+      "support": 368309.0
+    },
+    "weighted avg": {
+      "precision": 0.9999918550747292,
+      "recall": 0.9999918546655119,
+      "f1-score": 0.9999918197592178,
+      "support": 368309.0
+    }
+  },
+  "test_report": {
+    "cash_withdrawal": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4728.0
+    },
+    "debt_credit": {
+      "precision": 1.0,
+      "recall": 0.949438202247191,
+      "f1-score": 0.9740634005763689,
+      "support": 178.0
+    },
+    "dining": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 161448.0
+    },
+    "entertainment": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 382.0
+    },
+    "groceries": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 28367.0
+    },
+    "health": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 2072.0
+    },
+    "housing": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 8993.0
+    },
+    "income_interest": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 14982.0
+    },
+    "income_salary": {
+      "precision": 0.9998438394669721,
+      "recall": 1.0,
+      "f1-score": 0.999921913636482,
+      "support": 57624.0
+    },
+    "income_transfer": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4949.0
+    },
+    "insurance": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 2122.0
+    },
+    "shopping": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 30772.0
+    },
+    "subscriptions": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 38062.0
+    },
+    "transport": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 7696.0
+    },
+    "accuracy": 0.9999751638496033,
+    "macro avg": {
+      "precision": 0.9999888456762124,
+      "recall": 0.9963884430176565,
+      "f1-score": 0.9981418081580608,
+      "support": 362375.0
+    },
+    "weighted avg": {
+      "precision": 0.9999751677280299,
+      "recall": 0.9999751638496033,
+      "f1-score": 0.9999748427366435,
+      "support": 362375.0
+    }
+  },
+  "artifacts": {
+    "model": "/home/claude/tink_dataset/05_modelos/artifacts/clasificador_categorias_tink.pkl",
+    "predictions": "/home/claude/tink_dataset/data/clean/predicciones_clasificador_categorias_tink.csv",
+    "confusion_matrix": "/home/claude/tink_dataset/data/clean/clasificador_categorias_tink_confusion.csv"
+  }
+}
