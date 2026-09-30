@@ -14,6 +14,7 @@ DEFAULT_MANIFEST = ROOT_DIR / 'accounts' / 'synthetic' / 'manifest.json'
 DEFAULT_IPC = RAW_DIR / 'eurostat_ipc.csv'
 DEFAULT_RAW_OUTPUT = RAW_DIR / 'dataset_sintetico_usuarios_tink.csv'
 DEFAULT_CLEAN_OUTPUT = CLEAN_DIR / 'dataset_final_usuarios_tink.csv'
+DEFAULT_THRESHOLDS_OUTPUT = CLEAN_DIR / 'perfil_ahorro_thresholds_tink.json'
 
 PROFILE_ENCODING = {
     'junior': 0,
@@ -64,6 +65,8 @@ def parse_args():
                         help='CSV mensual de salida para consumo analitico.')
     parser.add_argument('--clean-output', type=Path, default=DEFAULT_CLEAN_OUTPUT,
                         help='Copia limpia de salida en data/clean/.')
+    parser.add_argument('--thresholds-output', type=Path, default=DEFAULT_THRESHOLDS_OUTPUT,
+                        help='JSON de salida con los umbrales (terciles) de perfil_ahorro.')
     parser.add_argument('--users-per-batch', type=int, default=2000,
                         help='Cuantos usuarios procesar por lote antes de agregar y liberar memoria.')
     parser.add_argument('--progress-every', type=int, default=8000,
@@ -244,7 +247,10 @@ def build_monthly_dataset(manifest_path, ipc_map, users_per_batch, progress_ever
         lambda row: round((row['ahorro'] / row['salario']) * 100, 2) if row['salario'] > 0 else 0.0,
         axis=1,
     )
-    df_monthly['perfil_ahorro'] = df_monthly['tasa_ahorro_pct'].apply(classify_saving_profile)
+    umbral_bajo, umbral_alto = compute_saving_profile_thresholds(df_monthly['tasa_ahorro_pct'])
+    df_monthly['perfil_ahorro'] = df_monthly['tasa_ahorro_pct'].apply(
+        lambda tasa: classify_saving_profile(tasa, umbral_bajo, umbral_alto)
+    )
     df_monthly['edad'] = df_monthly['user_label'].apply(stable_age)
     completed_ipc_map = build_completed_ipc_map(df_monthly['fecha'].unique(), ipc_map)
     df_monthly['ipc_mensual'] = df_monthly['fecha'].map(completed_ipc_map)
@@ -272,13 +278,38 @@ def build_monthly_dataset(manifest_path, ipc_map, users_per_batch, progress_ever
         'ipc_mensual',
     ]
     df_monthly[numeric_columns] = df_monthly[numeric_columns].round(2)
-    return df_monthly
+    return df_monthly, umbral_bajo, umbral_alto
 
 
-def classify_saving_profile(saving_rate):
-    if saving_rate >= 15:
+def compute_saving_profile_thresholds(tasa_ahorro_series):
+    """Calcula umbrales de perfil de ahorro relativos a la distribucion
+    empirica de tasa_ahorro_pct en este dataset (terciles), en lugar de
+    umbrales absolutos fijos (5%/15%).
+
+    Motivo: los umbrales absolutos fueron pensados para una poblacion de
+    referencia con tasas de ahorro tipicas (documentadas en la memoria
+    como ~10-20%). La muestra real de Tink utilizada como base para la
+    generacion sintetica tiene importes de gasto medianos bajos (25-75€)
+    frente a los salarios, lo que produce una tasa de ahorro mediana
+    anormalmente alta (~88%, limitacion de la muestra ya documentada en
+    el EDA). Con umbrales absolutos, mas del 99% de los registros caen
+    en 'buen_ahorrador', colapsando la variable objetivo del Modelo 2 a
+    una unica clase e impidiendo el entrenamiento.
+
+    Los terciles empiricos garantizan por construccion tres clases con
+    presencia real en los datos, preservando la interpretacion relativa
+    del perfil de ahorro (bajo/medio/alto ahorrador DENTRO de esta
+    poblacion), en lugar de fabricar importes de gasto no respaldados
+    por la muestra real solo para forzar una distribucion mas ancha."""
+    umbral_bajo = round(float(tasa_ahorro_series.quantile(1 / 3)), 2)
+    umbral_alto = round(float(tasa_ahorro_series.quantile(2 / 3)), 2)
+    return umbral_bajo, umbral_alto
+
+
+def classify_saving_profile(saving_rate, umbral_bajo, umbral_alto):
+    if saving_rate >= umbral_alto:
         return 'buen_ahorrador'
-    if saving_rate >= 5:
+    if saving_rate >= umbral_bajo:
         return 'ahorro_moderado'
     return 'ahorro_insuficiente'
 
@@ -298,16 +329,36 @@ def main():
     print('=' * 60)
 
     ipc_map = load_ipc_map(args.ipc)
-    df_monthly = build_monthly_dataset(args.manifest, ipc_map, args.users_per_batch, args.progress_every)
+    df_monthly, umbral_bajo, umbral_alto = build_monthly_dataset(
+        args.manifest, ipc_map, args.users_per_batch, args.progress_every
+    )
     save_dataset(df_monthly, args.raw_output, args.clean_output)
+
+    args.thresholds_output.parent.mkdir(parents=True, exist_ok=True)
+    with open(args.thresholds_output, 'w') as f:
+        json.dump({
+            'umbral_bajo_pct': umbral_bajo,
+            'umbral_alto_pct': umbral_alto,
+            'metodo': 'terciles empiricos de tasa_ahorro_pct (dataset Tink sintetico)',
+            'nota': (
+                'Umbrales relativos a esta poblacion, no absolutos, debido a la '
+                'tasa de ahorro anormalmente alta de la muestra real Tink '
+                '(limitacion documentada en el EDA). Ver docstring de '
+                'compute_saving_profile_thresholds().'
+            ),
+        }, f, indent=2)
 
     print(f'\nUsuarios: {df_monthly["user_id"].nunique():,}')
     print(f'Registros mensuales: {len(df_monthly):,}')
     print(f'Periodo: {df_monthly["fecha"].min()} — {df_monthly["fecha"].max()}')
     print(f'Salario medio mensual: {df_monthly["salario"].mean():.2f} €')
     print(f'Ahorro medio mensual: {df_monthly["ahorro"].mean():.2f} €')
+    print(f'Umbrales perfil_ahorro (terciles): bajo={umbral_bajo}% | alto={umbral_alto}%')
+    print(f'Distribucion perfil_ahorro:')
+    print(df_monthly['perfil_ahorro'].value_counts().to_string())
     print(f'Archivo raw: {args.raw_output}')
     print(f'Archivo clean: {args.clean_output}')
+    print(f'Archivo umbrales: {args.thresholds_output}')
 
 
 if __name__ == '__main__':

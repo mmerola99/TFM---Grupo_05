@@ -49,7 +49,7 @@ from sklearn.metrics import (mean_absolute_error, r2_score,
 sns.set_style("whitegrid")
 sns.set_palette("Set2")
 
-DATA_DIR  = os.path.join(os.path.dirname(__file__), '..', 'data', 'raw')
+DATA_DIR  = os.path.join(os.path.dirname(__file__), '..', 'data', 'clean')
 CLEAN_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'clean')
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
@@ -58,6 +58,27 @@ CATEGORIAS = ['vivienda', 'alimentacion', 'transporte', 'ocio',
               'salud', 'educacion', 'otros']
 
 PROFILE_ENCODING = {'junior': 0, 'medio': 1, 'senior': 2, 'freelance': 3}
+
+# Umbrales de perfil_ahorro: se leen del JSON generado por
+# 06_prepara_usuarios_tink.py (terciles empiricos de este dataset) para
+# mantener coherencia con el target del Modelo 2. Fallback a los
+# umbrales absolutos clasicos (15%/5%) si el archivo no existe (p. ej.
+# al trabajar con el dataset sintetico original en _archivo_legacy).
+_THRESHOLDS_PATH = os.path.join(
+    os.path.dirname(__file__), '..', 'data', 'clean', 'perfil_ahorro_thresholds_tink.json'
+)
+if os.path.exists(_THRESHOLDS_PATH):
+    with open(_THRESHOLDS_PATH) as _f:
+        _thresholds = json.load(_f)
+    UMBRAL_BAJO_AHORRO = _thresholds['umbral_bajo_pct']
+    UMBRAL_ALTO_AHORRO = _thresholds['umbral_alto_pct']
+    print(f"Umbrales perfil_ahorro cargados de {_THRESHOLDS_PATH}: "
+          f"bajo={UMBRAL_BAJO_AHORRO}% | alto={UMBRAL_ALTO_AHORRO}%")
+else:
+    UMBRAL_BAJO_AHORRO, UMBRAL_ALTO_AHORRO = 5.0, 15.0
+    print("Umbrales perfil_ahorro: no se encontro JSON de umbrales relativos, "
+          f"usando umbrales absolutos clasicos (bajo={UMBRAL_BAJO_AHORRO}%, "
+          f"alto={UMBRAL_ALTO_AHORRO}%)")
 
 
 # ============================================================
@@ -125,10 +146,60 @@ def build_lag_features(df):
         + [f'{cat}_lag1' for cat in CATEGORIAS]
     )
 
-    # Los primeros 3 meses de cada usuario no tienen histórico suficiente
-    df_model = df.dropna(subset=feature_cols).reset_index(drop=True)
+    return df, feature_cols
 
-    return df_model, feature_cols
+
+def construir_fila_futura(df_raw):
+    """Construye, para cada usuario, una fila 'virtual' correspondiente
+    al mes inmediatamente posterior al último mes disponible en sus
+    datos (t = T+1), con todas las variables de resultado del propio
+    mes (ahorro, salario, gasto por categoría, tasa de ahorro, perfil
+    de ahorro, ipc) puestas a NaN, ya que ese mes todavía no ha
+    ocurrido.
+
+    Esta fila se concatena con el histórico real y se pasa por
+    build_lag_features(): al calcular los rezagos con groupby+shift,
+    la fila virtual hereda automáticamente como 'lag1' los valores
+    REALES del último mes conocido (T), como 'lag2' los de T-1, etc.
+    De esta forma la proyección a T+1 usa exactamente los mismos 3
+    meses de histórico que el modelo usó en entrenamiento, y no
+    reproduce una estimación del propio mes T (que ya es conocido).
+    """
+    ultima_fila = (df_raw.sort_values(['user_id', 'fecha_dt'])
+                   .groupby('user_id').tail(1).copy())
+    ultima_fila['fecha_dt'] = ultima_fila['fecha_dt'] + pd.DateOffset(months=1)
+    ultima_fila['fecha'] = ultima_fila['fecha_dt'].dt.strftime('%Y-%m')
+
+    columnas_resultado = (['ahorro', 'salario', 'gasto_total',
+                            'tasa_ahorro_pct', 'perfil_ahorro', 'ipc_mensual']
+                          + CATEGORIAS)
+    for col in columnas_resultado:
+        ultima_fila[col] = np.nan
+
+    ultima_fila['es_pronostico'] = True
+    return ultima_fila
+
+
+def separar_reales_y_pronostico(df_con_lags, feature_cols):
+    """A partir del dataframe con rezagos ya calculados (histórico real
+    + fila virtual T+1 por usuario), separa:
+      - df_entrenable: meses reales con objetivo conocido y con
+        histórico suficiente (se descartan los 3 primeros meses de
+        cada usuario), listo para entrenar/evaluar.
+      - df_pronostico: la fila T+1 de cada usuario, lista para generar
+        la proyección individual (Modelo 1-bis), una vez el modelo
+        esté entrenado.
+    """
+    es_pronostico = df_con_lags.get('es_pronostico', False)
+    if not isinstance(es_pronostico, pd.Series):
+        es_pronostico = pd.Series(False, index=df_con_lags.index)
+    es_pronostico = es_pronostico.fillna(False).astype(bool)
+
+    df_pronostico = df_con_lags.loc[es_pronostico].dropna(subset=feature_cols).reset_index(drop=True)
+    df_entrenable = (df_con_lags.loc[~es_pronostico]
+                      .dropna(subset=feature_cols)
+                      .reset_index(drop=True))
+    return df_entrenable, df_pronostico
 
 
 # ============================================================
@@ -165,6 +236,63 @@ def explicacion_local(coef, intercept, x_std, feature_names, top_n=6):
     return detalle, prediccion_reconstruida
 
 
+def build_chained_savings_index(df):
+    """Construye una serie mensual de ahorro medio robusta a los cambios
+    de composicion de la poblacion activa mes a mes.
+
+    Motivo: el numero de usuarios activos varia entre ~5.000 y ~30.000
+    segun el mes (verificado empiricamente), porque cada uno de los 8
+    perfiles reales de origen Tink cubre una ventana temporal distinta
+    (desde 2 hasta 52 meses), y los usuarios sinteticos heredan la
+    ventana de su perfil de origen. La media transversal simple
+    (groupby('fecha')['ahorro'].mean()) confunde dos efectos distintos:
+    el cambio real de comportamiento financiero mes a mes, y el cambio
+    de QUIEN esta siendo promediado ese mes. Esto produce saltos
+    artificiales en la serie (verificado: un salto de 2.783€ a 4.653€
+    coincide exactamente con la entrada de un nuevo bloque de ~5.000
+    usuarios, no con un cambio de comportamiento real).
+
+    Un panel balanceado (mismos usuarios en todos los meses) no es
+    viable aqui: la interseccion de las ventanas temporales de los 8
+    perfiles de origen esta vacia (no hay un solo mes cubierto por
+    todos). En su lugar se usa un indice encadenado (chain-linked
+    index), la misma tecnica empleada en economia para indices con
+    cesta cambiante (p. ej. 'same-store sales' en retail, o indices de
+    precios con productos que entran y salen de la cesta): para cada
+    par de meses consecutivos (t-1, t) se calcula la tasa de variacion
+    SOLO sobre los usuarios presentes en AMBOS meses (el subconjunto
+    estable de esa transicion concreta), y esa tasa se encadena a
+    partir del nivel real del primer mes. El resultado esta en las
+    mismas unidades (€) que la serie original y sigue usando el 100%
+    de los usuarios disponibles en cada transicion (verificado: ningun
+    par de meses consecutivos tiene cero usuarios en comun; minimo
+    5.066), pero ya no arrastra saltos causados por la entrada o
+    salida de cohortes completas."""
+    df = df.sort_values('fecha')
+    months = sorted(df['fecha'].unique())
+    users_by_month = {m: set(df.loc[df['fecha'] == m, 'user_id']) for m in months}
+    ahorro_indexed = df.set_index(['fecha', 'user_id'])['ahorro']
+
+    nivel = float(df.loc[df['fecha'] == months[0], 'ahorro'].mean())
+    filas = [{'fecha': months[0], 'ahorro_medio_encadenado': round(nivel, 2),
+              'n_usuarios_comunes': None}]
+
+    for i in range(1, len(months)):
+        mes_prev, mes_actual = months[i - 1], months[i]
+        comunes = list(users_by_month[mes_prev] & users_by_month[mes_actual])
+        media_prev = ahorro_indexed.loc[mes_prev].loc[comunes].mean()
+        media_actual = ahorro_indexed.loc[mes_actual].loc[comunes].mean()
+        tasa_variacion = (media_actual / media_prev) if media_prev else 1.0
+        nivel = nivel * tasa_variacion
+        filas.append({
+            'fecha': mes_actual,
+            'ahorro_medio_encadenado': round(nivel, 2),
+            'n_usuarios_comunes': len(comunes),
+        })
+
+    return pd.DataFrame(filas)
+
+
 def graficar_explicacion_local(detalle, titulo, path):
     fig, ax = plt.subplots(figsize=(7, 4))
     colores = ['#EA4335' if c < 0 else '#34A853' for c in detalle['contribucion']]
@@ -182,13 +310,18 @@ print("MODELOS PREDICTIVOS — AI Financial Life Coach")
 print("=" * 60)
 
 # ── CARGA DE DATOS ───────────────────────────────────────────
-df_raw = cargar_dataset(f"{DATA_DIR}/dataset_sintetico_usuarios.csv")
+df_raw = cargar_dataset(f"{DATA_DIR}/dataset_final_usuarios_tink.csv")
 print(f"\nDataset: {df_raw.shape[0]:,} registros | {df_raw['user_id'].nunique()} usuarios")
 print(f"Período: {df_raw['fecha'].min()} — {df_raw['fecha'].max()}")
 
-df_model, feature_cols = build_lag_features(df_raw)
+fila_futura = construir_fila_futura(df_raw)
+df_extendido = pd.concat([df_raw, fila_futura], ignore_index=True, sort=False)
+df_con_lags, feature_cols = build_lag_features(df_extendido)
+df_model, df_pronostico_base = separar_reales_y_pronostico(df_con_lags, feature_cols)
+
 print(f"Registros aptos para modelado tras construir rezagos: {df_model.shape[0]:,} "
       f"(se descartan los 3 primeros meses de cada usuario por falta de histórico)")
+print(f"Filas de proyección a T+1 construidas: {df_pronostico_base.shape[0]:,} usuarios")
 
 
 # ============================================================
@@ -283,40 +416,67 @@ print(f"  Figura guardada: modelo1_explicacion_local_ejemplo.png "
 # ============================================================
 # MODELO 1-BIS — PROYECCIÓN INDIVIDUAL POR USUARIO
 # Objetivo: usando el Modelo 1 ya entrenado, generar para cada
-# usuario una predicción del ahorro de "el mes siguiente al último
-# mes disponible en sus datos", a partir de su propio histórico
-# reciente. Esta tabla es la que alimenta la página de KPIs por
-# usuario (una fila = un usuario = su previsión individual).
+# usuario una predicción genuina de "fuera de muestra" del ahorro
+# del mes siguiente al último mes disponible en sus datos (T+1),
+# a partir de los 3 meses reales más recientes de su histórico.
+# Esta tabla es la que alimenta la página de KPIs por usuario (una
+# fila = un usuario = su previsión individual).
 # ============================================================
 
 print("\n" + "=" * 60)
-print("MODELO 1-BIS — Proyección individual del ahorro (por usuario)")
+print("MODELO 1-BIS — Proyección individual del ahorro (por usuario, mes T+1)")
 print("=" * 60)
 
-ultimo_mes_por_usuario = (
-    df_model.sort_values(['user_id', 'fecha_dt'])
-    .groupby('user_id')
-    .tail(1)
-    .reset_index(drop=True)
-)
-# Estas filas usan como predictores los rezagos de los 3 últimos meses
-# reales de cada usuario, y devuelven una predicción para "el mes
-# siguiente" (fuera de la muestra, sin ahorro real todavía observado).
-X_usuarios = ultimo_mes_por_usuario[feature_cols]
+X_usuarios = df_pronostico_base[feature_cols]
 X_usuarios_s = scaler.transform(X_usuarios)
 ahorro_predicho_usuario = lr_model.predict(X_usuarios_s)
 
+# Salario estimado del mes T+1: a falta de un modelo específico de
+# ingresos, se emplea como aproximación el salario del último mes real
+# conocido (salario_lag1 de la fila de pronóstico). Se documenta como
+# limitación: una futura Fase 2 podría sustituir esta aproximación por
+# un modelo de ingresos propio.
+salario_proxy = df_pronostico_base['salario_lag1']
+tasa_predicha = (ahorro_predicho_usuario / salario_proxy.replace(0, np.nan) * 100).round(2)
+
+
+def clasificar_saving_profile(tasa):
+    """Umbrales de perfil de ahorro. Se leen, si existen, de
+    perfil_ahorro_thresholds_tink.json (terciles empiricos calculados por
+    06_prepara_usuarios_tink.py sobre este mismo dataset), para mantener
+    coherencia con el target ya presente en los datos que entrena el
+    Modelo 2. Si el archivo no existe (p. ej. al trabajar con el dataset
+    sintetico original), se recurre a los umbrales absolutos clasicos
+    (15%/5%) como fallback. Ver docstring de
+    compute_saving_profile_thresholds() en 06_prepara_usuarios_tink.py
+    para la justificacion metodologica completa."""
+    if pd.isna(tasa):
+        return np.nan
+    if tasa >= UMBRAL_ALTO_AHORRO:
+        return 'buen_ahorrador'
+    if tasa >= UMBRAL_BAJO_AHORRO:
+        return 'ahorro_moderado'
+    return 'ahorro_insuficiente'
+
+
+perfil_predicho = tasa_predicha.apply(clasificar_saving_profile)
+
 tabla_kpi_usuarios = pd.DataFrame({
-    'user_id': ultimo_mes_por_usuario['user_id'],
-    'ultimo_mes_disponible': ultimo_mes_por_usuario['fecha'],
-    'perfil': ultimo_mes_por_usuario['perfil'],
-    'ahorro_ultimo_mes': ultimo_mes_por_usuario['ahorro'],
-    'ahorro_predicho_mes_siguiente': ahorro_predicho_usuario.round(2),
+    'user_id': df_pronostico_base['user_id'],
+    'ultimo_mes_real': df_pronostico_base['fecha_dt'] - pd.DateOffset(months=1),
+    'mes_proyectado': df_pronostico_base['fecha'],
+    'perfil': df_pronostico_base['perfil'],
+    'ahorro_ultimo_mes_real': df_pronostico_base['ahorro_lag1'],
+    'salario_proxy_mes_proyectado': salario_proxy.round(2),
+    'ahorro_predicho_mes_proyectado': ahorro_predicho_usuario.round(2),
+    'tasa_ahorro_predicha_pct': tasa_predicha,
+    'perfil_ahorro_predicho': perfil_predicho,
 })
+tabla_kpi_usuarios['ultimo_mes_real'] = tabla_kpi_usuarios['ultimo_mes_real'].dt.strftime('%Y-%m')
 tabla_kpi_usuarios['variacion_esperada_pct'] = (
-    (tabla_kpi_usuarios['ahorro_predicho_mes_siguiente']
-     - tabla_kpi_usuarios['ahorro_ultimo_mes'])
-    / tabla_kpi_usuarios['ahorro_ultimo_mes'].replace(0, np.nan) * 100
+    (tabla_kpi_usuarios['ahorro_predicho_mes_proyectado']
+     - tabla_kpi_usuarios['ahorro_ultimo_mes_real'])
+    / tabla_kpi_usuarios['ahorro_ultimo_mes_real'].replace(0, np.nan) * 100
 ).round(2)
 
 tabla_kpi_usuarios.to_csv(f"{CLEAN_DIR}/kpi_usuarios_proyeccion.csv", index=False)
@@ -334,6 +494,195 @@ graficar_explicacion_local(
     f'Proyección individual — Explicación local (usuario {uid_ejemplo})',
     f"{CLEAN_DIR}/modelo1bis_explicacion_usuario_ejemplo.png")
 print(f"  Figura guardada: modelo1bis_explicacion_usuario_ejemplo.png")
+
+
+# ============================================================
+# CAPA PRESCRIPTIVA — RECOMENDACIONES DE AJUSTE DE GASTO
+#
+# A partir de la proyección individual del Modelo 1-bis, esta capa
+# traduce el diagnóstico predictivo ("¿cuánto ahorrará el usuario el
+# mes que viene?") en una recomendación concreta y accionable ("¿qué
+# categoría de gasto debería ajustar, y en qué medida, para mejorar su
+# posición?"), cerrando el ciclo input → proceso (modelos predictivos)
+# → output (recomendación prescriptiva) declarado en el objetivo
+# general del proyecto.
+#
+# Diseño elegido: un motor de reglas transparente y trazable, en
+# lugar de un modelo de optimización o de un nuevo modelo de caja
+# negra, por dos motivos: (a) coherencia con el compromiso de
+# interpretabilidad asumido para el proyecto, que exige poder explicar
+# el motivo de cada recomendación en términos que un usuario final
+# pueda entender; y (b) reutilización directa de la descomposición de
+# contribuciones ya calculada para el Modelo 1 (interpretabilidad
+# local), evitando introducir un componente adicional no explicable.
+#
+# Reglas:
+#  1. Cada categoría de gasto se clasifica en un nivel de flexibilidad
+#     (rígida / semi-flexible / flexible), siguiendo la distinción
+#     habitual entre gasto esencial y discrecional en las encuestas de
+#     presupuestos familiares utilizadas como referencia en este
+#     trabajo: vivienda, salud y educación se consideran gastos
+#     rígidos (no se recomienda ajustarlos); alimentación y transporte,
+#     semi-flexibles; ocio y otros, flexibles.
+#  2. El objetivo de ahorro no es un valor arbitrario: se reutilizan
+#     los mismos umbrales ya definidos para el perfil de ahorro
+#     (5 % y 15 %). Si la tasa de ahorro proyectada para el mes
+#     siguiente sitúa al usuario en 'ahorro_insuficiente' o
+#     'ahorro_moderado', se le propone alcanzar el umbral
+#     inmediatamente superior (un objetivo alcanzable en un paso, en
+#     lugar de exigir directamente el 15 % a cualquier usuario).
+#  3. Para cerrar la brecha entre el ahorro proyectado y el ahorro
+#     objetivo, se identifican las categorías flexibles y
+#     semi-flexibles cuya contribución local (Modelo 1) más penaliza
+#     el ahorro, y se recomienda una reducción de gasto acotada (máximo
+#     20 % en categorías flexibles, 10 % en semi-flexibles, sobre el
+#     gasto del último mes real) hasta cerrar la brecha o agotar las
+#     categorías disponibles. El límite evita recomendaciones
+#     irreales (p. ej. eliminar por completo una categoría).
+# ============================================================
+
+print("\n" + "=" * 60)
+print("CAPA PRESCRIPTIVA — Recomendaciones de ajuste de gasto")
+print("=" * 60)
+
+FLEXIBILIDAD_CATEGORIAS = {
+    'vivienda': 'rigida', 'salud': 'rigida', 'educacion': 'rigida',
+    'alimentacion': 'semi_flexible', 'transporte': 'semi_flexible',
+    'ocio': 'flexible', 'otros': 'flexible',
+}
+TOPE_REDUCCION = {'flexible': 0.20, 'semi_flexible': 0.10, 'rigida': 0.0}
+CATEGORIAS_AJUSTABLES = [c for c, f in FLEXIBILIDAD_CATEGORIAS.items() if f != 'rigida']
+
+
+def generar_recomendacion(fila_pronostico, x_std, coef, intercept, feature_names,
+                           tasa_predicha, perfil_predicho):
+    if perfil_predicho == 'buen_ahorrador' or pd.isna(perfil_predicho):
+        return {'requiere_ajuste': False, 'motivo': 'objetivo_ya_alcanzado', 'ajustes': []}
+
+    objetivo_pct = UMBRAL_ALTO_AHORRO if perfil_predicho == 'ahorro_moderado' else UMBRAL_BAJO_AHORRO
+    salario_proxy_fila = fila_pronostico['salario_lag1']
+    ahorro_objetivo = objetivo_pct / 100 * salario_proxy_fila
+    ahorro_predicho_fila = tasa_predicha / 100 * salario_proxy_fila
+    brecha = round(ahorro_objetivo - ahorro_predicho_fila, 2)
+    if brecha <= 0:
+        return {'requiere_ajuste': False, 'motivo': 'objetivo_ya_alcanzado', 'ajustes': []}
+
+    contribuciones = pd.Series(coef * x_std, index=feature_names)
+    orden_categorias = sorted(
+        CATEGORIAS_AJUSTABLES,
+        key=lambda c: contribuciones.get(f'{c}_lag1', 0.0)
+    )  # más negativo (penaliza más el ahorro) primero
+
+    ajustes = []
+    restante = brecha
+    for cat in orden_categorias:
+        if restante <= 0:
+            break
+        gasto_actual = fila_pronostico[f'{cat}_lag1']
+        if pd.isna(gasto_actual) or gasto_actual <= 0:
+            continue
+        tope = TOPE_REDUCCION[FLEXIBILIDAD_CATEGORIAS[cat]] * gasto_actual
+        reduccion = round(min(tope, restante), 2)
+        if reduccion <= 0:
+            continue
+        ajustes.append({
+            'categoria': cat,
+            'gasto_actual_ultimo_mes': round(gasto_actual, 2),
+            'reduccion_sugerida_eur': reduccion,
+            'reduccion_sugerida_pct': round(reduccion / gasto_actual * 100, 1),
+        })
+        restante = round(restante - reduccion, 2)
+
+    ahorro_estimado_tras_ajuste = round(ahorro_predicho_fila + (brecha - restante), 2)
+    tasa_estimada_tras_ajuste = round(
+        ahorro_estimado_tras_ajuste / salario_proxy_fila * 100, 2
+    ) if salario_proxy_fila else np.nan
+
+    return {
+        'requiere_ajuste': True,
+        'motivo': f'proyeccion_por_debajo_de_{objetivo_pct:.0f}pct',
+        'objetivo_pct': objetivo_pct,
+        'brecha_ahorro_eur': brecha,
+        'brecha_cubierta_eur': round(brecha - restante, 2),
+        'brecha_cubierta_pct': round((brecha - restante) / brecha * 100, 1) if brecha else 0.0,
+        'ahorro_estimado_tras_ajuste': ahorro_estimado_tras_ajuste,
+        'tasa_ahorro_estimada_tras_ajuste': tasa_estimada_tras_ajuste,
+        'ajustes': ajustes,
+    }
+
+
+recomendaciones = []
+for i in range(len(df_pronostico_base)):
+    fila = df_pronostico_base.iloc[i]
+    resultado = generar_recomendacion(
+        fila, X_usuarios_s[i], lr_model.coef_, lr_model.intercept_, feature_cols,
+        tasa_predicha.iloc[i], perfil_predicho.iloc[i])
+
+    top_ajuste = resultado['ajustes'][0] if resultado['ajustes'] else None
+    recomendaciones.append({
+        'user_id': int(fila['user_id']),
+        'perfil_ahorro_predicho': perfil_predicho.iloc[i],
+        'requiere_ajuste': resultado['requiere_ajuste'],
+        'brecha_ahorro_eur': resultado.get('brecha_ahorro_eur', 0.0),
+        'brecha_cubierta_pct': resultado.get('brecha_cubierta_pct', np.nan),
+        'tasa_ahorro_estimada_tras_ajuste': resultado.get('tasa_ahorro_estimada_tras_ajuste', np.nan),
+        'categoria_principal_sugerida': top_ajuste['categoria'] if top_ajuste else None,
+        'reduccion_principal_eur': top_ajuste['reduccion_sugerida_eur'] if top_ajuste else 0.0,
+        'reduccion_principal_pct': top_ajuste['reduccion_sugerida_pct'] if top_ajuste else 0.0,
+        'n_categorias_afectadas': len(resultado['ajustes']),
+    })
+
+tabla_recomendaciones = pd.DataFrame(recomendaciones)
+tabla_recomendaciones.to_csv(f"{CLEAN_DIR}/recomendaciones_prescriptivas.csv", index=False)
+
+n_con_ajuste = int(tabla_recomendaciones['requiere_ajuste'].sum())
+pct_con_ajuste = round(n_con_ajuste / len(tabla_recomendaciones) * 100, 1)
+print(f"\n  Usuarios con recomendación de ajuste: {n_con_ajuste:,} de "
+      f"{len(tabla_recomendaciones):,} ({pct_con_ajuste}%)")
+if n_con_ajuste:
+    cobertura_media = tabla_recomendaciones.loc[
+        tabla_recomendaciones['requiere_ajuste'], 'brecha_cubierta_pct'].mean()
+    print(f"  Cobertura media de la brecha de ahorro tras el ajuste sugerido: "
+          f"{cobertura_media:.1f}%")
+    print(f"\n  Categoría principal sugerida (frecuencia):")
+    print(tabla_recomendaciones.loc[tabla_recomendaciones['requiere_ajuste'],
+                                      'categoria_principal_sugerida']
+          .value_counts().to_string())
+
+# Gráfico 7: frecuencia de la categoría principal sugerida
+fig, ax = plt.subplots(figsize=(7, 4))
+frecuencia = (tabla_recomendaciones.loc[tabla_recomendaciones['requiere_ajuste'],
+                                          'categoria_principal_sugerida']
+              .value_counts())
+if len(frecuencia):
+    ax.bar(frecuencia.index, frecuencia.values, color='#1A73E8', alpha=0.85)
+ax.set_title('Capa prescriptiva — Categoría principal sugerida para el ajuste',
+             fontweight='bold')
+ax.set_ylabel('Nº de usuarios')
+plt.tight_layout()
+plt.savefig(f"{CLEAN_DIR}/prescriptivo_categoria_sugerida.png", dpi=150, bbox_inches='tight')
+plt.close()
+print("  Figura guardada: prescriptivo_categoria_sugerida.png")
+
+# Ejemplo ilustrativo completo (para un usuario con ajuste sugerido, si existe)
+usuarios_con_ajuste = tabla_recomendaciones.index[tabla_recomendaciones['requiere_ajuste']]
+if len(usuarios_con_ajuste):
+    idx_demo = usuarios_con_ajuste[0]
+    fila_demo = df_pronostico_base.iloc[idx_demo]
+    resultado_demo = generar_recomendacion(
+        fila_demo, X_usuarios_s[idx_demo], lr_model.coef_, lr_model.intercept_, feature_cols,
+        tasa_predicha.iloc[idx_demo], perfil_predicho.iloc[idx_demo])
+    print(f"\n  Ejemplo — usuario {int(fila_demo['user_id'])}:")
+    print(f"    Tasa de ahorro proyectada: {tasa_predicha.iloc[idx_demo]:.2f}% "
+          f"(perfil: {perfil_predicho.iloc[idx_demo]})")
+    print(f"    Objetivo: {resultado_demo['objetivo_pct']:.0f}% "
+          f"| Brecha: {resultado_demo['brecha_ahorro_eur']:.2f}€")
+    for ajuste in resultado_demo['ajustes']:
+        print(f"    - Reducir '{ajuste['categoria']}' en "
+              f"{ajuste['reduccion_sugerida_eur']:.2f}€ "
+              f"({ajuste['reduccion_sugerida_pct']:.1f}%)")
+    print(f"    Tasa de ahorro estimada tras el ajuste: "
+          f"{resultado_demo['tasa_ahorro_estimada_tras_ajuste']:.2f}%")
 
 
 # ============================================================
@@ -404,7 +753,7 @@ print("  Figura guardada: modelo2_coeficientes_por_clase.png")
 
 
 # ============================================================
-# MODELO 3 — SERIE TEMPORAL (agregada, sin cambios de fondo)
+# MODELO 3 — SERIE TEMPORAL (índice encadenado por composición estable)
 # Objetivo: proyectar el ahorro medio de la población de usuarios
 #           para los próximos 6 meses.
 # Método: regresión lineal sobre tendencia + estacionalidad
@@ -416,16 +765,30 @@ print("  Figura guardada: modelo2_coeficientes_por_clase.png")
 # información de los Modelos 1 y 2 (no existe una identidad contable
 # entre el ahorro medio de un mes y su propia serie histórica). La
 # vista por usuario individual la aporta el Modelo 1-bis.
+#
+# CORRECCIÓN METODOLÓGICA (revisión de esta versión): la media
+# transversal simple por mes está distorsionada por el cambio de
+# composición de la población activa (entre ~5.000 y ~30.000 usuarios
+# según el mes, por las distintas ventanas temporales de los 8
+# perfiles reales de origen). Se sustituye por un índice encadenado
+# (ver docstring de build_chained_savings_index) que aísla la dinámica
+# temporal real del efecto de composición. Se conserva también la
+# media simple (ahorro_medio_naive) únicamente a título comparativo,
+# para documentar visualmente el efecto de la corrección.
 # ============================================================
 
 print("\n" + "=" * 60)
 print("MODELO 3 — Serie Temporal: proyección del ahorro medio (6 meses)")
 print("=" * 60)
 
-ahorro_medio = (df_raw.groupby('fecha')['ahorro']
-                .mean()
-                .reset_index()
-                .rename(columns={'ahorro': 'ahorro_medio'}))
+ahorro_medio_naive = (df_raw.groupby('fecha')['ahorro']
+                       .mean()
+                       .reset_index()
+                       .rename(columns={'ahorro': 'ahorro_medio_naive'}))
+
+ahorro_medio = build_chained_savings_index(df_raw)
+ahorro_medio = ahorro_medio.merge(ahorro_medio_naive, on='fecha', how='left')
+ahorro_medio = ahorro_medio.rename(columns={'ahorro_medio_encadenado': 'ahorro_medio'})
 ahorro_medio['fecha_dt'] = pd.to_datetime(ahorro_medio['fecha'])
 ahorro_medio = ahorro_medio.sort_values('fecha_dt').reset_index(drop=True)
 ahorro_medio['t'] = range(len(ahorro_medio))
@@ -489,6 +852,26 @@ plt.savefig(f"{CLEAN_DIR}/modelo3_proyeccion.png", dpi=150, bbox_inches='tight')
 plt.close()
 print("  Figura guardada: modelo3_proyeccion.png")
 
+# Gráfico 6-bis: comparación media naive (distorsionada por composición)
+# vs. índice encadenado (corregido), para documentar visualmente el
+# efecto de la corrección metodológica en la memoria.
+fig, ax = plt.subplots(figsize=(12, 5))
+ax.plot(ahorro_medio['fecha_dt'], ahorro_medio['ahorro_medio_naive'],
+        color='#9AA0A6', linewidth=1.5, linestyle=':', marker='o', markersize=3,
+        label='Media simple (sin corregir, distorsionada por composición)')
+ax.plot(ahorro_medio['fecha_dt'], ahorro_medio['ahorro_medio'],
+        color='#1A73E8', linewidth=2, marker='o', markersize=3,
+        label='Índice encadenado (corregido)')
+ax.set_title('Modelo 3 — Efecto de la corrección por composición de la muestra',
+              fontweight='bold')
+ax.set_xlabel('Fecha')
+ax.set_ylabel('Ahorro medio (€)')
+ax.legend(fontsize=9)
+plt.tight_layout()
+plt.savefig(f"{CLEAN_DIR}/modelo3_comparacion_naive_vs_encadenado.png", dpi=150, bbox_inches='tight')
+plt.close()
+print("  Figura guardada: modelo3_comparacion_naive_vs_encadenado.png")
+
 
 # ── GUARDAR MÉTRICAS ─────────────────────────────────────────
 metricas = {
@@ -499,9 +882,24 @@ metricas = {
     'modelo2_accuracy': round(acc, 4),
     'modelo2_clases': list(clf_model.classes_),
     'modelo3_predicciones': df_pred[['fecha', 'ahorro_predicho']].to_dict('records'),
+    'modelo3_metodo': (
+        'Indice encadenado (chain-linked) sobre usuarios comunes entre '
+        'meses consecutivos, en lugar de media transversal simple. '
+        'Corrige la distorsion por composicion cambiante de la muestra '
+        '(entre ~5.000 y ~30.000 usuarios activos segun el mes, por las '
+        'distintas ventanas temporales de los 8 perfiles reales de '
+        'origen Tink). Ver docstring de build_chained_savings_index().'
+    ),
+    'modelo3_usuarios_comunes_min': int(ahorro_medio['n_usuarios_comunes'].dropna().min()),
+    'modelo3_usuarios_comunes_mediana': int(ahorro_medio['n_usuarios_comunes'].dropna().median()),
     'particion': 'GroupShuffleSplit por user_id (20% usuarios en test)',
     'usuarios_train': int(train_df['user_id'].nunique()),
     'usuarios_test': int(test_df['user_id'].nunique()),
+    'prescriptivo_usuarios_con_ajuste': n_con_ajuste,
+    'prescriptivo_pct_usuarios_con_ajuste': pct_con_ajuste,
+    'prescriptivo_cobertura_media_brecha_pct': (
+        round(float(cobertura_media), 1) if n_con_ajuste else None
+    ),
 }
 with open(f"{CLEAN_DIR}/metricas_modelos.json", 'w') as f:
     json.dump(metricas, f, indent=2)
@@ -517,6 +915,8 @@ print(f"  Modelo 1 — Regresión Lineal (histórico t-1..t-3):")
 print(f"    MAE = {mae_lr:.2f}€ | R² = {r2_lr:.4f}")
 print(f"  Modelo 1-bis — Proyección individual: "
       f"{len(tabla_kpi_usuarios):,} usuarios")
+print(f"  Capa prescriptiva — Usuarios con recomendación de ajuste: "
+      f"{n_con_ajuste:,} ({pct_con_ajuste}%)")
 print(f"  Modelo 2 — Regresión Logística (histórico t-1..t-3):")
 print(f"    Accuracy = {acc:.4f}")
 print(f"  Modelo 3 — Proyección temporal agregada:")

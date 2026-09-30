@@ -1,36 +1,66 @@
 {
-  "modelo1_mae": 0.0,
-  "modelo1_r2": 1.0,
-  "modelo2_accuracy": 0.9633,
-  "modelo3_predicciones": [
-    {
-      "fecha": "2026-06",
-      "ahorro_predicho": 370.9
-    },
-    {
-      "fecha": "2026-07",
-      "ahorro_predicho": 367.18
-    },
-    {
-      "fecha": "2026-08",
-      "ahorro_predicho": 363.7
-    },
-    {
-      "fecha": "2026-09",
-      "ahorro_predicho": 360.41
-    },
-    {
-      "fecha": "2026-10",
-      "ahorro_predicho": 357.2
-    },
-    {
-      "fecha": "2026-11",
-      "ahorro_predicho": 353.95
-    }
+  "modelo1_mae": 624.84,
+  "modelo1_r2": 0.7736,
+  "modelo1_n_features": 18,
+  "modelo1_features": [
+    "edad",
+    "perfil_encoded",
+    "ipc_lag1",
+    "ahorro_lag1",
+    "ahorro_lag2",
+    "ahorro_lag3",
+    "ahorro_roll3",
+    "salario_lag1",
+    "salario_roll3",
+    "gasto_total_lag1",
+    "gasto_total_roll3",
+    "vivienda_lag1",
+    "alimentacion_lag1",
+    "transporte_lag1",
+    "ocio_lag1",
+    "salud_lag1",
+    "educacion_lag1",
+    "otros_lag1"
   ],
-  "clases_modelo2": [
+  "modelo2_accuracy": 0.5097,
+  "modelo2_clases": [
     "ahorro_insuficiente",
     "ahorro_moderado",
     "buen_ahorrador"
-  ]
+  ],
+  "modelo3_predicciones": [
+    {
+      "fecha": "2026-08",
+      "ahorro_predicho": 3806.78
+    },
+    {
+      "fecha": "2026-09",
+      "ahorro_predicho": 3805.08
+    },
+    {
+      "fecha": "2026-10",
+      "ahorro_predicho": 3804.5
+    },
+    {
+      "fecha": "2026-11",
+      "ahorro_predicho": 3805.23
+    },
+    {
+      "fecha": "2026-12",
+      "ahorro_predicho": 3807.09
+    },
+    {
+      "fecha": "2027-01",
+      "ahorro_predicho": 3809.62
+    }
+  ],
+  "modelo3_metodo": "Indice encadenado (chain-linked) sobre usuarios comunes entre meses consecutivos, en lugar de media transversal simple. Corrige la distorsion por composicion cambiante de la muestra (entre ~5.000 y ~30.000 usuarios activos segun el mes, por las distintas ventanas temporales de los 8 perfiles reales de origen Tink). Ver docstring de build_chained_savings_index().",
+  "modelo3_usuarios_comunes_min": 5066,
+  "modelo3_usuarios_comunes_mediana": 9986,
+  "particion": "GroupShuffleSplit por user_id (20% usuarios en test)",
+  "usuarios_train": 19901,
+  "usuarios_test": 4976,
+  "prescriptivo_usuarios_con_ajuste": 16579,
+  "prescriptivo_pct_usuarios_con_ajuste": 55.5,
+  "prescriptivo_cobertura_media_brecha_pct": 54.7
 }

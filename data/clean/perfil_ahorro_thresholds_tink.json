@@ -1,0 +1,6 @@
+{
+  "umbral_bajo_pct": 86.29,
+  "umbral_alto_pct": 90.42,
+  "metodo": "terciles empiricos de tasa_ahorro_pct (dataset Tink sintetico)",
+  "nota": "Umbrales relativos a esta poblacion, no absolutos, debido a la tasa de ahorro anormalmente alta de la muestra real Tink (limitacion documentada en el EDA). Ver docstring de compute_saving_profile_thresholds()."
+}
