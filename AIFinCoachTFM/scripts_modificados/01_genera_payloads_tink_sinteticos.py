@@ -26,7 +26,7 @@ def parse_args():
                         help='Cantidad de usuarios sinteticos a generar.')
     parser.add_argument('--seed', type=int, default=42,
                         help='Semilla aleatoria para reproducibilidad.')
-    parser.add_argument('--max-transactions', type=int, default=220,
+    parser.add_argument('--max-transactions', type=int, default=800,
                         help='Maximo de transacciones por usuario sintetico.')
     parser.add_argument('--output-dir', type=Path, default=OUTPUT_DIR,
                         help='Carpeta de salida para los payloads generados.')
@@ -88,6 +88,66 @@ def account_type_localized(account_type, language):
     }
     options = names.get(account_type, names['CHECKING'])
     return random.choice(options.get(language, options['generic']))
+
+
+SALARY_PATTERNS = [
+    r'\bsalary\b', r'salario', r'payroll', r'n[oó]?mina', r'haberes',
+    r'\bgehalt\b', r'lohn', r'\bnomin',
+]
+
+DEFAULT_BASE_SALARY = {
+    'es': 1550.0,
+    'de': 2100.0,
+    'generic': 1600.0,
+}
+
+
+def infer_salary(income_amounts, income_descriptions, language):
+    """Deriva una descripcion y un importe base de nomina realistas a partir
+    de las transacciones de credito observadas en la muestra real.
+
+    income_amounts e income_descriptions estan alineados por indice (se
+    construyen en el mismo bucle en build_profiles), asi que se pueden
+    emparejar directamente.
+    """
+    pairs = list(zip(income_descriptions, income_amounts))
+    salary_pairs = [
+        (desc, amount) for desc, amount in pairs
+        if any(re.search(pattern, desc.lower()) for pattern in SALARY_PATTERNS)
+    ]
+
+    if salary_pairs:
+        amounts = sorted(amount for _, amount in salary_pairs)
+        base_salary = amounts[len(amounts) // 2]
+        description = Counter(desc for desc, _ in salary_pairs).most_common(1)[0][0]
+        return description, base_salary
+
+    if income_amounts:
+        amounts = sorted(income_amounts)
+        base_salary = amounts[len(amounts) // 2]
+        description = 'Salary' if language != 'es' else 'Nomina'
+        return description, max(base_salary, 400.0)
+
+    description = 'Salary' if language != 'es' else 'Nomina'
+    return description, DEFAULT_BASE_SALARY.get(language, DEFAULT_BASE_SALARY['generic'])
+
+
+MIN_EXPENSE_TX_PER_MONTH = 4
+MAX_EXPENSE_TX_PER_MONTH = 35
+FALLBACK_EXPENSE_TX_PER_MONTH = 12.0
+
+
+def months_between(start_date, end_date):
+    months = []
+    cursor = start_date.replace(day=1)
+    end_cursor = end_date.replace(day=1)
+    while cursor <= end_cursor:
+        months.append(cursor)
+        if cursor.month == 12:
+            cursor = cursor.replace(year=cursor.year + 1, month=1)
+        else:
+            cursor = cursor.replace(month=cursor.month + 1)
+    return months
 
 
 def infer_language(descriptions):
@@ -187,6 +247,33 @@ def build_profiles(samples):
         start_date = min(booked_dates) if booked_dates else datetime(2026, 1, 1).date()
         end_date = max(booked_dates) if booked_dates else datetime(2026, 7, 1).date()
 
+        salary_description, base_salary = infer_salary(income, merchants_positive, language)
+
+        # Frecuencia media de gasto por mes. Las muestras reales cubren
+        # ventanas de observacion muy dispares (2 a 52 meses) y algunas no
+        # registran transacciones de debito en absoluto, asi que un
+        # promedio crudo por perfil no es fiable: se descarta cuando cae
+        # fuera de un rango plausible de actividad bancaria personal y se
+        # usa en su lugar un valor de referencia (fallback), para no dejar
+        # meses sinteticos sin ningun gasto o con cientos de ellos.
+        real_months = months_between(start_date, end_date)
+        raw_avg_expense = len(expense) / max(1, len(real_months))
+        if MIN_EXPENSE_TX_PER_MONTH <= raw_avg_expense <= MAX_EXPENSE_TX_PER_MONTH:
+            avg_expense_tx_per_month = raw_avg_expense
+        else:
+            avg_expense_tx_per_month = FALLBACK_EXPENSE_TX_PER_MONTH
+
+        # Ingresos "secundarios" (intereses, transferencias puntuales, etc.):
+        # se excluyen las entradas que ya se usan para modelar la nomina
+        # mensual, para no duplicar importes de tipo salario como relleno.
+        secondary_income_descriptions = []
+        secondary_income_amounts = []
+        for desc, amount in zip(merchants_positive, income):
+            if any(re.search(pattern, desc.lower()) for pattern in SALARY_PATTERNS):
+                continue
+            secondary_income_descriptions.append(desc)
+            secondary_income_amounts.append(amount)
+
         profiles.append({
             'source': sample['source'],
             'language': language,
@@ -195,12 +282,17 @@ def build_profiles(samples):
             'expense_amounts': expense,
             'income_descriptions': merchants_positive,
             'expense_descriptions': merchants_negative,
+            'secondary_income_descriptions': secondary_income_descriptions,
+            'secondary_income_amounts': secondary_income_amounts,
             'scale_weights': scale_counter,
             'currency_weights': currencies,
             'status_weights': statuses,
             'start_date': start_date,
             'end_date': end_date,
             'transactions_per_user': len(transactions),
+            'salary_description': salary_description,
+            'base_salary': base_salary,
+            'avg_expense_tx_per_month': avg_expense_tx_per_month,
         })
 
     return [profile for profile in profiles if profile['account_templates']]
@@ -224,6 +316,22 @@ def jitter_amount(base_amount, positive):
     if positive:
         return max(amount, 10.0)
     return max(amount, 2.5)
+
+
+def jitter_salary(base_salary):
+    """Variacion pequena y realista para la nomina mensual (p.ej. horas
+    extra o pequenos ajustes), sin el efecto de cola larga del amplificador
+    aleatorio que se usaba antes para todos los ingresos."""
+    factor = clamp(random.gauss(1.0, 0.04), 0.9, 1.12)
+    return round(max(base_salary, 1.0) * factor, 2)
+
+
+def jitter_secondary_income(base_amount):
+    """Ingresos secundarios ocasionales (intereses, transferencias
+    puntuales): variacion moderada, sin el multiplicador de hasta x2.8 que
+    provocaba salarios mensuales acumulados irreales."""
+    factor = clamp(random.gauss(1.0, 0.25), 0.5, 1.5)
+    return round(max(base_amount * factor, 5.0), 2)
 
 
 def make_account_payload(profile, synthetic_user_id):
@@ -288,23 +396,10 @@ def make_account_payload(profile, synthetic_user_id):
     }, transaction_targets
 
 
-def make_transaction(profile, synthetic_user_id, tx_index, account_id):
-    positive = random.random() < 0.22
-    description_pool = profile['income_descriptions'] if positive else profile['expense_descriptions']
-    amount_pool = profile['income_amounts'] if positive else profile['expense_amounts']
-    description = random.choice(description_pool) if description_pool else ('Salary' if positive else 'Card payment')
-    amount = random.choice(amount_pool) if amount_pool else (1600.0 if positive else 34.5)
-
-    if positive and random.random() < 0.35:
-        amount *= random.uniform(1.1, 2.8)
-
-    amount = jitter_amount(amount, positive)
-    signed_amount = amount if positive else -amount
+def build_transaction_payload(profile, synthetic_user_id, tx_index, account_id, signed_amount, description, booked_date):
     scale = weighted_choice(profile['scale_weights'] or Counter({2: 1}))
     currency = weighted_choice(profile['currency_weights'] or Counter({'EUR': 1}))
     status = weighted_choice(profile['status_weights'] or Counter({'BOOKED': 1}))
-    span_days = max((profile['end_date'] - profile['start_date']).days, 30)
-    booked_date = profile['end_date'] - timedelta(days=random.randint(0, span_days))
     tx_id = stable_hex(f'{synthetic_user_id}-{account_id}-{tx_index}')
     provider_tx_id = str(1000 + synthetic_user_id * 1000 + tx_index)
 
@@ -333,25 +428,101 @@ def make_transaction(profile, synthetic_user_id, tx_index, account_id):
     }
 
 
+def random_day_in_month(month_start, profile):
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    days_in_month = (next_month - timedelta(days=1)).day
+    day = random.randint(1, days_in_month)
+    booked_date = month_start.replace(day=day)
+    return min(max(booked_date, profile['start_date']), profile['end_date'])
+
+
+def make_transaction(profile, synthetic_user_id, tx_index, account_id, booked_date):
+    """Genera una transaccion de "relleno" para el mes/dia indicados: un
+    gasto habitual, o de forma ocasional (8%) un ingreso secundario pequeno
+    (interes, transferencia puntual). La nomina mensual se genera aparte,
+    en make_salary_transaction, para evitar que el salario del mes se
+    infle con multiples creditos aleatorios."""
+    positive = random.random() < 0.08
+    description_pool = profile['secondary_income_descriptions'] if positive else profile['expense_descriptions']
+    amount_pool = profile['secondary_income_amounts'] if positive else profile['expense_amounts']
+    description = random.choice(description_pool) if description_pool else ('Interest' if positive else 'Card payment')
+    amount = random.choice(amount_pool) if amount_pool else (25.0 if positive else 34.5)
+
+    if positive:
+        # Tope de seguridad: ademas del filtro por descripcion, ningun
+        # ingreso "secundario" de relleno puede superar una fraccion de la
+        # nomina base, para evitar que una transferencia puntual grande
+        # residual en la muestra real distorsione el mes.
+        amount = min(amount, profile['base_salary'] * 0.6)
+
+    amount = jitter_secondary_income(amount) if positive else jitter_amount(amount, positive=False)
+    signed_amount = amount if positive else -amount
+
+    return build_transaction_payload(
+        profile, synthetic_user_id, tx_index, account_id, signed_amount, description, booked_date,
+    )
+
+
+def make_salary_transaction(profile, synthetic_user_id, tx_index, account_id, month_start):
+    """Genera exactamente un abono de nomina para el mes indicado, con un
+    dia de pago estable (24-28) y una variacion pequena y realista."""
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    days_in_month = (next_month - timedelta(days=1)).day
+    pay_day = min(24 + (synthetic_user_id % 5), days_in_month)
+    booked_date = month_start.replace(day=pay_day)
+    booked_date = min(max(booked_date, profile['start_date']), profile['end_date'])
+
+    amount = jitter_salary(profile['base_salary'])
+
+    return build_transaction_payload(
+        profile, synthetic_user_id, tx_index, account_id, amount, profile['salary_description'], booked_date,
+    )
+
+
 def make_transaction_pages(profile, synthetic_user_id, account_payload, transaction_targets, max_transactions):
-    account_ids = [account['id'] for account in account_payload['accounts']]
+    """Genera las transacciones mes a mes: un abono de nomina garantizado
+    (make_salary_transaction) mas un numero de gastos calibrado sobre la
+    actividad real observada (avg_expense_tx_per_month), en lugar de
+    repartir un presupuesto total fijo de transacciones entre nomina y
+    gastos. Ese reparto por presupuesto dejaba, con muchos meses de
+    historial, la mayoria de los meses con una unica transaccion (solo la
+    nomina) y una tasa de ahorro cercana al 100%, muy alejada de un
+    comportamiento financiero real."""
+    accounts = account_payload['accounts']
+    account_ids = [account['id'] for account in accounts]
     if not account_ids:
         return []
 
-    total_transactions = min(sum(transaction_targets.values()), max_transactions)
+    # Cuenta principal para el abono de nomina: preferimos una CHECKING si
+    # existe, si no la primera cuenta disponible.
+    primary_account = next((acc['id'] for acc in accounts if acc.get('type') == 'CHECKING'), account_ids[0])
+    account_weights = [max(1, transaction_targets.get(acc_id, 1)) for acc_id in account_ids]
+
+    months = months_between(profile['start_date'], profile['end_date'])
     transactions = []
     tx_index = 1
 
-    for account_id in account_ids:
-        target = min(transaction_targets[account_id], max_transactions - len(transactions))
-        for _ in range(target):
-            transactions.append(make_transaction(profile, synthetic_user_id, tx_index, account_id))
+    for month_start in months:
+        transactions.append(make_salary_transaction(profile, synthetic_user_id, tx_index, primary_account, month_start))
+        tx_index += 1
+
+        expense_count = max(1, round(profile['avg_expense_tx_per_month'] * random.uniform(0.75, 1.25)))
+        for _ in range(expense_count):
+            account_id = random.choices(account_ids, weights=account_weights, k=1)[0]
+            booked_date = random_day_in_month(month_start, profile)
+            transactions.append(make_transaction(profile, synthetic_user_id, tx_index, account_id, booked_date))
             tx_index += 1
-            if len(transactions) >= total_transactions:
-                break
-        if len(transactions) >= total_transactions:
+
+        if len(transactions) >= max_transactions:
             break
 
+    transactions = transactions[:max_transactions]
     transactions.sort(key=lambda tx: (tx['dates']['booked'], tx['id']), reverse=True)
 
     pages = []

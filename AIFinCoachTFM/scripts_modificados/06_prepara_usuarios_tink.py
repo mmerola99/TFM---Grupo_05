@@ -64,6 +64,10 @@ def parse_args():
                         help='CSV mensual de salida para consumo analitico.')
     parser.add_argument('--clean-output', type=Path, default=DEFAULT_CLEAN_OUTPUT,
                         help='Copia limpia de salida en data/clean/.')
+    parser.add_argument('--users-per-batch', type=int, default=2000,
+                        help='Cuantos usuarios procesar por lote antes de agregar y liberar memoria.')
+    parser.add_argument('--progress-every', type=int, default=8000,
+                        help='Cada cuantos usuarios mostrar progreso.')
     return parser.parse_args()
 
 
@@ -128,44 +132,41 @@ def build_completed_ipc_map(months, ipc_map):
     return completed.to_dict()
 
 
-def iter_transactions(manifest_path):
-    manifest = load_json(manifest_path)
-    for user_meta in manifest.get('users', []):
-        for relative_tx_path in user_meta.get('transaction_files', []):
-            tx_path = ROOT_DIR / Path(relative_tx_path)
-            payload = load_json(tx_path)
-            for transaction in payload.get('transactions', []):
-                yield user_meta, transaction
-
-
-def build_monthly_dataset(manifest_path, ipc_map):
+def rows_for_user(user_meta):
     rows = []
+    for relative_tx_path in user_meta.get('transaction_files', []):
+        tx_path = ROOT_DIR / Path(relative_tx_path)
+        payload = load_json(tx_path)
+        for transaction in payload.get('transactions', []):
+            amount = amount_from_payload(transaction['amount'])
+            booked_date = transaction['dates']['booked']
+            month = booked_date[:7]
+            description = transaction.get('descriptions', {}).get('original', '').strip()
+            expense_category = classify_category(description) if amount < 0 else None
 
-    for user_meta, transaction in iter_transactions(manifest_path):
-        amount = amount_from_payload(transaction['amount'])
-        booked_date = transaction['dates']['booked']
-        month = booked_date[:7]
-        description = transaction.get('descriptions', {}).get('original', '').strip()
-        expense_category = classify_category(description) if amount < 0 else None
+            rows.append({
+                'user_label': user_meta['synthetic_user'],
+                'user_id': numeric_user_id(user_meta['synthetic_user']),
+                'fecha': month,
+                'amount_signed': amount,
+                'descripcion': description,
+                'categoria_gasto': expense_category,
+                'status': transaction.get('status', 'BOOKED'),
+                'profile_source': user_meta.get('profile_source', ''),
+                'language_hint': user_meta.get('language_hint', ''),
+            })
+    return rows
 
-        row = {
-            'user_label': user_meta['synthetic_user'],
-            'user_id': numeric_user_id(user_meta['synthetic_user']),
-            'fecha': month,
-            'amount_signed': amount,
-            'descripcion': description,
-            'categoria_gasto': expense_category,
-            'status': transaction.get('status', 'BOOKED'),
-            'profile_source': user_meta.get('profile_source', ''),
-            'language_hint': user_meta.get('language_hint', ''),
-        }
-        rows.append(row)
 
-    if not rows:
-        raise RuntimeError('No se encontraron transacciones en el manifest indicado.')
-
-    df_tx = pd.DataFrame(rows)
+def aggregate_monthly(df_tx):
+    """Agrega un bloque de transacciones (de un lote de usuarios completos)
+    a nivel usuario+mes. El resultado agregado es mucho mas pequeño que las
+    transacciones de origen, asi que puede acumularse en memoria lote a
+    lote sin problema; lo que no cabia en memoria era la lista de
+    transacciones en bruto para los 40k usuarios a la vez."""
     df_tx = df_tx[df_tx['status'].eq('BOOKED')].copy()
+    if df_tx.empty:
+        return None
 
     monthly_base = (
         df_tx.groupby(['user_label', 'user_id', 'fecha', 'profile_source', 'language_hint'], as_index=False)
@@ -190,15 +191,51 @@ def build_monthly_dataset(manifest_path, ipc_map):
     )
     monthly_categories.columns.name = None
 
-    df_monthly = monthly_base.merge(
+    df_monthly_batch = monthly_base.merge(
         monthly_categories,
         on=['user_label', 'user_id', 'fecha', 'profile_source', 'language_hint'],
         how='left',
     )
 
     for category in ['vivienda', 'alimentacion', 'transporte', 'ocio', 'salud', 'educacion', 'otros']:
-        if category not in df_monthly.columns:
-            df_monthly[category] = 0.0
+        if category not in df_monthly_batch.columns:
+            df_monthly_batch[category] = 0.0
+
+    return df_monthly_batch
+
+
+def build_monthly_dataset(manifest_path, ipc_map, users_per_batch, progress_every):
+    manifest = load_json(manifest_path)
+    users = manifest.get('users', [])
+
+    batch_results = []
+    batch_rows = []
+    processed = 0
+
+    for user_meta in users:
+        batch_rows.extend(rows_for_user(user_meta))
+        processed += 1
+
+        if processed % users_per_batch == 0:
+            df_tx_batch = pd.DataFrame(batch_rows)
+            batch_result = aggregate_monthly(df_tx_batch)
+            if batch_result is not None:
+                batch_results.append(batch_result)
+            batch_rows = []
+
+        if processed % progress_every == 0:
+            print(f'Procesados {processed:,}/{len(users):,} usuarios...', flush=True)
+
+    if batch_rows:
+        df_tx_batch = pd.DataFrame(batch_rows)
+        batch_result = aggregate_monthly(df_tx_batch)
+        if batch_result is not None:
+            batch_results.append(batch_result)
+
+    if not batch_results:
+        raise RuntimeError('No se encontraron transacciones en el manifest indicado.')
+
+    df_monthly = pd.concat(batch_results, ignore_index=True)
 
     df_monthly['salario'] = df_monthly['salario'].round(2)
     df_monthly['gasto_total'] = df_monthly['gasto_total'].round(2)
@@ -261,7 +298,7 @@ def main():
     print('=' * 60)
 
     ipc_map = load_ipc_map(args.ipc)
-    df_monthly = build_monthly_dataset(args.manifest, ipc_map)
+    df_monthly = build_monthly_dataset(args.manifest, ipc_map, args.users_per_batch, args.progress_every)
     save_dataset(df_monthly, args.raw_output, args.clean_output)
 
     print(f'\nUsuarios: {df_monthly["user_id"].nunique():,}')
