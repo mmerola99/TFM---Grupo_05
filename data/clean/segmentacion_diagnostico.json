@@ -1,0 +1,154 @@
+{
+  "metodo": "K-Means sobre perfil comportamental agregado por usuario",
+  "k_elegido": 6,
+  "criterio_seleccion_k": "silueta maxima en rango k=3..6; se excluye k=2 por separar trivialmente solo por nivel de ingreso",
+  "silueta_k_elegido": 0.4908,
+  "evaluacion_k": [
+    {
+      "k": 2,
+      "inercia": 360306.43075318733,
+      "silueta": 0.33197636446705003
+    },
+    {
+      "k": 3,
+      "inercia": 266793.2136143301,
+      "silueta": 0.41685781403687033
+    },
+    {
+      "k": 4,
+      "inercia": 225477.60740857176,
+      "silueta": 0.4312439139863609
+    },
+    {
+      "k": 5,
+      "inercia": 186979.19286635832,
+      "silueta": 0.4818159904971786
+    },
+    {
+      "k": 6,
+      "inercia": 147072.85158224887,
+      "silueta": 0.49082178312975255
+    },
+    {
+      "k": 7,
+      "inercia": 123570.68370750084,
+      "silueta": 0.4962878859587132
+    },
+    {
+      "k": 8,
+      "inercia": 101094.05310238455,
+      "silueta": 0.48441534744236525
+    }
+  ],
+  "n_usuarios_segmentados": 40000,
+  "resumen_por_cluster": [
+    {
+      "cluster": 0,
+      "ingreso_medio": 7544.35,
+      "tasa_ahorro_media": 90.77,
+      "volatilidad_ahorro": 0.11,
+      "edad": 32.57,
+      "pct_gasto_vivienda": 0.06,
+      "pct_gasto_alimentacion": 0.56,
+      "pct_gasto_transporte": 0.0,
+      "pct_gasto_ocio": 0.0,
+      "pct_gasto_otros": 0.38,
+      "perfil_medio": 0.0,
+      "perfil_senior": 1.0,
+      "perfil_freelance": 0.0,
+      "ahorro_medio": 6903.7,
+      "n_usuarios": 9916,
+      "pct_usuarios": 24.8
+    },
+    {
+      "cluster": 1,
+      "ingreso_medio": 2095.74,
+      "tasa_ahorro_media": 30.84,
+      "volatilidad_ahorro": 0.31,
+      "edad": 32.58,
+      "pct_gasto_vivienda": 0.03,
+      "pct_gasto_alimentacion": 0.28,
+      "pct_gasto_transporte": 0.1,
+      "pct_gasto_ocio": 0.02,
+      "pct_gasto_otros": 0.57,
+      "perfil_medio": 1.0,
+      "perfil_senior": 0.0,
+      "perfil_freelance": 0.0,
+      "ahorro_medio": 662.61,
+      "n_usuarios": 4977,
+      "pct_usuarios": 12.4
+    },
+    {
+      "cluster": 2,
+      "ingreso_medio": 2006.37,
+      "tasa_ahorro_media": 52.64,
+      "volatilidad_ahorro": 0.22,
+      "edad": 32.44,
+      "pct_gasto_vivienda": 0.0,
+      "pct_gasto_alimentacion": 0.0,
+      "pct_gasto_transporte": 0.0,
+      "pct_gasto_ocio": 0.0,
+      "pct_gasto_otros": 1.0,
+      "perfil_medio": 0.0,
+      "perfil_senior": 0.28,
+      "perfil_freelance": 0.0,
+      "ahorro_medio": 1477.11,
+      "n_usuarios": 18003,
+      "pct_usuarios": 45.0
+    },
+    {
+      "cluster": 3,
+      "ingreso_medio": 2005.86,
+      "tasa_ahorro_media": 85.83,
+      "volatilidad_ahorro": 0.05,
+      "edad": 32.49,
+      "pct_gasto_vivienda": 0.0,
+      "pct_gasto_alimentacion": 0.22,
+      "pct_gasto_transporte": 0.0,
+      "pct_gasto_ocio": 0.44,
+      "pct_gasto_otros": 0.33,
+      "perfil_medio": 1.0,
+      "perfil_senior": 0.0,
+      "perfil_freelance": 0.0,
+      "ahorro_medio": 1722.26,
+      "n_usuarios": 4954,
+      "pct_usuarios": 12.4
+    },
+    {
+      "cluster": 4,
+      "ingreso_medio": 1622.06,
+      "tasa_ahorro_media": -153.16,
+      "volatilidad_ahorro": 2.16,
+      "edad": 32.6,
+      "pct_gasto_vivienda": 0.0,
+      "pct_gasto_alimentacion": 0.0,
+      "pct_gasto_transporte": 0.0,
+      "pct_gasto_ocio": 0.0,
+      "pct_gasto_otros": 1.0,
+      "perfil_medio": 0.0,
+      "perfil_senior": 0.0,
+      "perfil_freelance": 0.0,
+      "ahorro_medio": -2474.81,
+      "n_usuarios": 2047,
+      "pct_usuarios": 5.1
+    },
+    {
+      "cluster": 5,
+      "ingreso_medio": 3565.83,
+      "tasa_ahorro_media": 72.98,
+      "volatilidad_ahorro": 0.45,
+      "edad": 32.8,
+      "pct_gasto_vivienda": 0.0,
+      "pct_gasto_alimentacion": 0.07,
+      "pct_gasto_transporte": 0.0,
+      "pct_gasto_ocio": 0.0,
+      "pct_gasto_otros": 0.93,
+      "perfil_medio": 0.0,
+      "perfil_senior": 0.0,
+      "perfil_freelance": 1.0,
+      "ahorro_medio": 3152.3,
+      "n_usuarios": 103,
+      "pct_usuarios": 0.3
+    }
+  ]
+}

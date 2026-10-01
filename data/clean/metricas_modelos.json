@@ -1,32 +1,31 @@
 {
-  "modelo1_mae": 624.84,
-  "modelo1_r2": 0.7736,
+  "modelo1_mae": 609.32,
+  "modelo1_r2": 0.7993,
   "modelo1_n_features": 18,
   "modelo1_features": [
     "edad",
-    "perfil_encoded",
+    "perfil_medio",
+    "perfil_senior",
+    "perfil_freelance",
     "ipc_lag1",
     "ahorro_lag1",
     "ahorro_lag2",
     "ahorro_lag3",
     "ahorro_roll3",
-    "salario_lag1",
-    "salario_roll3",
-    "gasto_total_lag1",
-    "gasto_total_roll3",
+    "salario_lag1_log",
+    "salario_roll3_log",
+    "gasto_total_lag1_log",
+    "gasto_total_roll3_log",
     "vivienda_lag1",
     "alimentacion_lag1",
     "transporte_lag1",
     "ocio_lag1",
-    "salud_lag1",
-    "educacion_lag1",
     "otros_lag1"
   ],
-  "modelo2_accuracy": 0.5097,
+  "modelo2_accuracy": 0.7257,
   "modelo2_clases": [
-    "ahorro_insuficiente",
-    "ahorro_moderado",
-    "buen_ahorrador"
+    "ahorro_adecuado",
+    "ahorro_insuficiente"
   ],
   "modelo3_predicciones": [
     {
@@ -60,7 +59,8 @@
   "particion": "GroupShuffleSplit por user_id (20% usuarios en test)",
   "usuarios_train": 19901,
   "usuarios_test": 4976,
-  "prescriptivo_usuarios_con_ajuste": 16579,
-  "prescriptivo_pct_usuarios_con_ajuste": 55.5,
-  "prescriptivo_cobertura_media_brecha_pct": 54.7
+  "prescriptivo_usuarios_con_ajuste": 15803,
+  "prescriptivo_pct_usuarios_con_ajuste": 52.9,
+  "prescriptivo_cobertura_media_brecha_pct": 41.4,
+  "modelo2_esquema_clases": "Esquema binario (ahorro_adecuado / ahorro_insuficiente) por mediana, sustituyendo el esquema anterior de terciles (3 clases). Historial: (1) umbral absoluto fijo -> colapsaba a una sola clase; (2) terciles -> resolvia el colapso pero la clase central quedaba en una franja de solo ~4 puntos porcentuales, estadisticamente no separable (recall 0.02); (3) se evaluo tambien un esquema de 3 clases por igual anchura (8/20/72%), que mejoraba el recall de la clase central (0.65) pero hacia colapsar la precision de 'ahorro_insuficiente' (0.52 -> 0.20, F1 0.61 -> 0.32); (4) esquema binario por mediana (adoptado): un unico limite de decision elimina el problema estructural de una clase atrapada entre dos fronteras, sin el trade-off de precision observado en la alternativa de 3 clases. F1 macro final: 0.72 (vs. 0.43 con terciles). Ver docstring de compute_saving_profile_threshold() en 06_prepara_usuarios_tink.py para el detalle completo de las 4 iteraciones."
 }

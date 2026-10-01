@@ -1,6 +1,10 @@
 {
-  "umbral_bajo_pct": 86.29,
-  "umbral_alto_pct": 90.42,
-  "metodo": "terciles empiricos de tasa_ahorro_pct (dataset Tink sintetico)",
-  "nota": "Umbrales relativos a esta poblacion, no absolutos, debido a la tasa de ahorro anormalmente alta de la muestra real Tink (limitacion documentada en el EDA). Ver docstring de compute_saving_profile_thresholds()."
+  "esquema": "binario",
+  "umbral_mediana_pct": 88.41,
+  "clases": [
+    "ahorro_insuficiente",
+    "ahorro_adecuado"
+  ],
+  "metodo": "mediana empirica de tasa_ahorro_pct (dataset Tink sintetico)",
+  "nota": "Esquema binario (2 clases) por mediana, en lugar del esquema original de terciles (3 clases): se verifico empiricamente que los terciles dejaban la clase central en una franja demasiado estrecha (~4 puntos porcentuales) para ser separable con las features disponibles (recall 0.02). El esquema binario por mediana elimina ese problema estructural (un unico limite de decision en vez de dos) y mejora el F1 macro de 0.43 a 0.72. Ver docstring de compute_saving_profile_threshold()."
 }

@@ -27,6 +27,13 @@
 # columnas mediante el pipeline de preparación correspondiente) pueda
 # invocarse sin cambios estructurales, concatenando el dataset
 # sintético y el dataset real antes de llamar a build_lag_features().
+#
+# El preprocesamiento (codificación de 'perfil', evaluación de
+# asimetría y transformación logarítmica, escalado) está documentado
+# y justificado empíricamente en preprocesamiento.py (Asignatura 7,
+# apartado 4.1); este script importa y reutiliza esas mismas
+# funciones para garantizar que el modelado usa exactamente el
+# preprocesamiento allí descrito, sin lógica duplicada.
 # ============================================================
 
 import os
@@ -40,11 +47,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from sklearn.model_selection import GroupShuffleSplit
-from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.linear_model import (LinearRegression, LogisticRegression,
+                                   RidgeCV, LogisticRegressionCV)
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import (mean_absolute_error, r2_score,
                               classification_report, accuracy_score,
                               confusion_matrix, ConfusionMatrixDisplay)
+
+from preprocesamiento import (codificar_perfil_onehot, aplicar_log_transform,
+                               decidir_variables_a_transformar)
 
 sns.set_style("whitegrid")
 sns.set_palette("Set2")
@@ -57,28 +68,42 @@ RANDOM_STATE = 42
 CATEGORIAS = ['vivienda', 'alimentacion', 'transporte', 'ocio',
               'salud', 'educacion', 'otros']
 
-PROFILE_ENCODING = {'junior': 0, 'medio': 1, 'senior': 2, 'freelance': 3}
+# Codificación de 'perfil': one-hot encoding (ver preprocesamiento.py),
+# no ordinal — 'perfil' es una categórica nominal sin orden natural.
+# Columnas dummy resultantes (junior es la categoría base, omitida por
+# drop_first=True en codificar_perfil_onehot).
+PERFIL_ONEHOT_COLS = ['perfil_medio', 'perfil_senior', 'perfil_freelance']
 
 # Umbrales de perfil_ahorro: se leen del JSON generado por
 # 06_prepara_usuarios_tink.py (terciles empiricos de este dataset) para
 # mantener coherencia con el target del Modelo 2. Fallback a los
-# umbrales absolutos clasicos (15%/5%) si el archivo no existe (p. ej.
-# al trabajar con el dataset sintetico original en _archivo_legacy).
+# umbral absoluto clasico (15%) si el archivo no existe (p. ej. al
+# trabajar con el dataset sintetico original en _archivo_legacy).
+#
+# Esquema binario (2 clases: ahorro_insuficiente / ahorro_adecuado) por
+# mediana, en lugar del esquema original de terciles (3 clases): se
+# verifico empiricamente que los terciles dejaban la clase central en
+# una franja demasiado estrecha (~4 puntos porcentuales) para ser
+# separable con las features disponibles (recall 0.02 en esa clase).
+# El esquema binario elimina ese problema estructural -- un unico
+# limite de decision en vez de dos -- y mejora el F1 macro de 0.43 a
+# 0.72 (ver docstring de compute_saving_profile_threshold() en
+# 06_prepara_usuarios_tink.py para el historial completo de esta
+# decision, incluyendo las alternativas de 3 clases evaluadas y
+# descartadas).
 _THRESHOLDS_PATH = os.path.join(
     os.path.dirname(__file__), '..', 'data', 'clean', 'perfil_ahorro_thresholds_tink.json'
 )
 if os.path.exists(_THRESHOLDS_PATH):
     with open(_THRESHOLDS_PATH) as _f:
         _thresholds = json.load(_f)
-    UMBRAL_BAJO_AHORRO = _thresholds['umbral_bajo_pct']
-    UMBRAL_ALTO_AHORRO = _thresholds['umbral_alto_pct']
-    print(f"Umbrales perfil_ahorro cargados de {_THRESHOLDS_PATH}: "
-          f"bajo={UMBRAL_BAJO_AHORRO}% | alto={UMBRAL_ALTO_AHORRO}%")
+    UMBRAL_MEDIANA_AHORRO = _thresholds['umbral_mediana_pct']
+    print(f"Umbral perfil_ahorro cargado de {_THRESHOLDS_PATH}: "
+          f"mediana={UMBRAL_MEDIANA_AHORRO}% (esquema binario)")
 else:
-    UMBRAL_BAJO_AHORRO, UMBRAL_ALTO_AHORRO = 5.0, 15.0
-    print("Umbrales perfil_ahorro: no se encontro JSON de umbrales relativos, "
-          f"usando umbrales absolutos clasicos (bajo={UMBRAL_BAJO_AHORRO}%, "
-          f"alto={UMBRAL_ALTO_AHORRO}%)")
+    UMBRAL_MEDIANA_AHORRO = 15.0
+    print("Umbral perfil_ahorro: no se encontro JSON de umbral relativo, "
+          f"usando umbral absoluto clasico ({UMBRAL_MEDIANA_AHORRO}%)")
 
 
 # ============================================================
@@ -88,11 +113,15 @@ else:
 def cargar_dataset(path):
     """Carga un dataset mensual por usuario con el esquema estándar de
     17 columnas (sintético o derivado de Tink vía prepara_usuarios_tink.py)
-    y homogeneiza tipos para que ambas fuentes sean intercambiables."""
-    df = pd.read_csv(path)
+    y homogeneiza tipos para que ambas fuentes sean intercambiables.
 
-    if 'perfil_encoded' not in df.columns:
-        df['perfil_encoded'] = df['perfil'].map(PROFILE_ENCODING)
+    La codificación de 'perfil' se realiza mediante one-hot encoding
+    (ver preprocesamiento.codificar_perfil_onehot): es una variable
+    categórica nominal sin orden natural entre sus categorías, por lo
+    que una codificación ordinal induciría una relación de magnitud
+    inexistente en los datos."""
+    df = pd.read_csv(path)
+    df, _ = codificar_perfil_onehot(df)
 
     df['fecha_dt'] = pd.to_datetime(df['fecha'], format='%Y-%m')
     df = df.sort_values(['user_id', 'fecha_dt']).reset_index(drop=True)
@@ -110,11 +139,33 @@ def build_lag_features(df):
     El mes t conserva únicamente su variable objetivo (ahorro,
     perfil_ahorro) y las variables verdaderamente exógenas o estáticas
     que no participan de la identidad ahorro = salario - gasto_total:
-    edad, perfil_encoded e ipc (rezagado un mes, ya que el IPC de un
-    mes se publica con retraso y no está disponible al inicio de éste).
+    edad, perfil (codificado one-hot) e ipc (rezagado un mes, ya que
+    el IPC de un mes se publica con retraso y no está disponible al
+    inicio de éste).
 
     De este modo ningún predictor del mes t puede reconstruir
     algebraicamente el ahorro de ese mismo mes.
+
+    'salud' y 'educacion' se excluyen de las features del modelo (no
+    de CATEGORIAS en general, que sigue usándose para la capa
+    prescriptiva): tienen desviación estándar 0 en la totalidad del
+    dataset (639.433 filas), es decir, ninguna transacción de estas
+    categorías está presente en los datos derivados de Tink —
+    consistente con la limitación ya documentada en
+    sgbd/docs/tink_mapping.md sobre la categorización de
+    transacciones aún pendiente. Incluir una columna constante como
+    predictor no aporta información y solo añade ruido a la matriz
+    de diseño.
+
+    Salario y gasto_total (y sus rezagos/medias móviles) se incluyen
+    en su versión log1p: preprocesamiento.py evalúa su asimetría
+    (skew salario=1.06, skew gasto_total=13.01) y, superando el
+    umbral de |skew|>1, confirma empíricamente (comparación de MAE/R²
+    del Modelo 1) que la transformación logarítmica mejora el ajuste
+    frente a las variables originales. 'ahorro' se deja sin
+    transformar: contiene valores negativos y es la variable
+    objetivo del Modelo 1, donde se prioriza la interpretabilidad de
+    los coeficientes en euros.
     """
     df = df.copy()
     g = df.groupby('user_id')
@@ -133,17 +184,26 @@ def build_lag_features(df):
     df['gasto_total_lag1'] = g['gasto_total'].shift(1)
     df['gasto_total_roll3'] = g['gasto_total'].transform(lambda s: s.shift(1).rolling(3).mean())
 
+    # Transformación logarítmica (justificada empíricamente en
+    # preprocesamiento.py) de salario y gasto_total, aplicada también
+    # a sus rezagos/medias móviles ya construidos arriba.
+    _, variables_a_transformar = decidir_variables_a_transformar(df)
+    df, _ = aplicar_log_transform(df, variables_a_transformar)
+
     # Categorías de gasto: patrón reciente (un rezago es suficiente para
     # capturar el mix de consumo sin disparar la dimensionalidad)
     for cat in CATEGORIAS:
         df[f'{cat}_lag1'] = g[cat].shift(1)
 
+    categorias_con_varianza = [c for c in CATEGORIAS if c not in ('salud', 'educacion')]
+
     feature_cols = (
-        ['edad', 'perfil_encoded', 'ipc_lag1',
+        ['edad'] + PERFIL_ONEHOT_COLS +
+        ['ipc_lag1',
          'ahorro_lag1', 'ahorro_lag2', 'ahorro_lag3', 'ahorro_roll3',
-         'salario_lag1', 'salario_roll3',
-         'gasto_total_lag1', 'gasto_total_roll3']
-        + [f'{cat}_lag1' for cat in CATEGORIAS]
+         'salario_lag1_log', 'salario_roll3_log',
+         'gasto_total_lag1_log', 'gasto_total_roll3_log']
+        + [f'{cat}_lag1' for cat in categorias_con_varianza]
     )
 
     return df, feature_cols
@@ -347,7 +407,19 @@ scaler = StandardScaler()
 X_train_s = scaler.fit_transform(X_train)
 X_test_s = scaler.transform(X_test)
 
-lr_model = LinearRegression()
+# Se detecta colinealidad severa entre features de salario derivadas
+# de la misma variable (salario_lag1_log vs. salario_roll3_log,
+# r=0.96): con OLS puro esto produce coeficientes inestables y de
+# signo económicamente contraintuitivo (ver preprocesamiento.py y la
+# nota en el apartado 7.1 de la memoria), aunque la predicción
+# agregada no se vea afectada. Se usa RidgeCV (regularización L2, con
+# la fuerza de regularización alpha seleccionada por validación
+# cruzada sobre el propio conjunto de entrenamiento) en lugar de
+# LinearRegression: estabiliza las estimaciones de coeficientes ante
+# variables correlacionadas sin descartar ninguna, y conserva la
+# interpretabilidad lineal completa (misma descomposición
+# coeficiente × valor estandarizado usada en explicacion_local()).
+lr_model = RidgeCV(alphas=np.logspace(-2, 4, 25))
 lr_model.fit(X_train_s, y_train)
 y_pred_lr = lr_model.predict(X_test_s)
 
@@ -357,6 +429,7 @@ r2_lr = r2_score(y_test, y_pred_lr)
 print(f"\n  Usuarios train: {train_df['user_id'].nunique():,} | "
       f"Usuarios test: {test_df['user_id'].nunique():,}")
 print(f"  Filas  train: {len(X_train):,} | Filas  test: {len(X_test):,}")
+print(f"  Alpha seleccionado (RidgeCV): {lr_model.alpha_:.3f}")
 print(f"  MAE:  {mae_lr:.2f} € (error medio absoluto)")
 print(f"  R²:   {r2_lr:.4f} (varianza explicada)")
 
@@ -441,21 +514,20 @@ tasa_predicha = (ahorro_predicho_usuario / salario_proxy.replace(0, np.nan) * 10
 
 
 def clasificar_saving_profile(tasa):
-    """Umbrales de perfil de ahorro. Se leen, si existen, de
-    perfil_ahorro_thresholds_tink.json (terciles empiricos calculados por
+    """Umbral de perfil de ahorro (esquema binario). Se lee, si existe, de
+    perfil_ahorro_thresholds_tink.json (mediana empirica calculada por
     06_prepara_usuarios_tink.py sobre este mismo dataset), para mantener
     coherencia con el target ya presente en los datos que entrena el
     Modelo 2. Si el archivo no existe (p. ej. al trabajar con el dataset
-    sintetico original), se recurre a los umbrales absolutos clasicos
-    (15%/5%) como fallback. Ver docstring de
-    compute_saving_profile_thresholds() en 06_prepara_usuarios_tink.py
-    para la justificacion metodologica completa."""
+    sintetico original), se recurre al umbral absoluto clasico (15%)
+    como fallback. Ver docstring de compute_saving_profile_threshold()
+    en 06_prepara_usuarios_tink.py para la justificacion metodologica
+    completa (incluye el historial de las versiones anteriores: umbral
+    absoluto -> terciles -> binario por mediana)."""
     if pd.isna(tasa):
         return np.nan
-    if tasa >= UMBRAL_ALTO_AHORRO:
-        return 'buen_ahorrador'
-    if tasa >= UMBRAL_BAJO_AHORRO:
-        return 'ahorro_moderado'
+    if tasa >= UMBRAL_MEDIANA_AHORRO:
+        return 'ahorro_adecuado'
     return 'ahorro_insuficiente'
 
 
@@ -524,13 +596,11 @@ print(f"  Figura guardada: modelo1bis_explicacion_usuario_ejemplo.png")
 #     trabajo: vivienda, salud y educación se consideran gastos
 #     rígidos (no se recomienda ajustarlos); alimentación y transporte,
 #     semi-flexibles; ocio y otros, flexibles.
-#  2. El objetivo de ahorro no es un valor arbitrario: se reutilizan
-#     los mismos umbrales ya definidos para el perfil de ahorro
-#     (5 % y 15 %). Si la tasa de ahorro proyectada para el mes
-#     siguiente sitúa al usuario en 'ahorro_insuficiente' o
-#     'ahorro_moderado', se le propone alcanzar el umbral
-#     inmediatamente superior (un objetivo alcanzable en un paso, en
-#     lugar de exigir directamente el 15 % a cualquier usuario).
+#  2. El objetivo de ahorro no es un valor arbitrario: se reutiliza el
+#     mismo umbral (mediana) ya definido para el perfil de ahorro
+#     (esquema binario). Si la tasa de ahorro proyectada para el mes
+#     siguiente sitúa al usuario en 'ahorro_insuficiente', se le
+#     propone alcanzar ese umbral.
 #  3. Para cerrar la brecha entre el ahorro proyectado y el ahorro
 #     objetivo, se identifican las categorías flexibles y
 #     semi-flexibles cuya contribución local (Modelo 1) más penaliza
@@ -556,10 +626,10 @@ CATEGORIAS_AJUSTABLES = [c for c, f in FLEXIBILIDAD_CATEGORIAS.items() if f != '
 
 def generar_recomendacion(fila_pronostico, x_std, coef, intercept, feature_names,
                            tasa_predicha, perfil_predicho):
-    if perfil_predicho == 'buen_ahorrador' or pd.isna(perfil_predicho):
+    if perfil_predicho == 'ahorro_adecuado' or pd.isna(perfil_predicho):
         return {'requiere_ajuste': False, 'motivo': 'objetivo_ya_alcanzado', 'ajustes': []}
 
-    objetivo_pct = UMBRAL_ALTO_AHORRO if perfil_predicho == 'ahorro_moderado' else UMBRAL_BAJO_AHORRO
+    objetivo_pct = UMBRAL_MEDIANA_AHORRO
     salario_proxy_fila = fila_pronostico['salario_lag1']
     ahorro_objetivo = objetivo_pct / 100 * salario_proxy_fila
     ahorro_predicho_fila = tasa_predicha / 100 * salario_proxy_fila
@@ -689,7 +759,9 @@ if len(usuarios_con_ajuste):
 # MODELO 2 — REGRESIÓN LOGÍSTICA (reformulación temporal)
 # Objetivo: clasificar el perfil de ahorro del mes t a partir del
 #           histórico t-1, t-2, t-3 del propio usuario
-# Clases: buen_ahorrador / ahorro_moderado / ahorro_insuficiente
+# Clases: ahorro_adecuado / ahorro_insuficiente (esquema binario por
+# mediana; ver docstring de compute_saving_profile_threshold() en
+# 06_prepara_usuarios_tink.py para el historial de esta decision)
 # ============================================================
 
 print("\n" + "=" * 60)
@@ -710,8 +782,14 @@ scaler2 = StandardScaler()
 X2_train_s = scaler2.fit_transform(X2_train)
 X2_test_s = scaler2.transform(X2_test)
 
-clf_model = LogisticRegression(max_iter=2000, random_state=RANDOM_STATE,
-                                class_weight='balanced')
+# Misma razón que en el Modelo 1 (ver nota junto a RidgeCV): las
+# features de entrada comparten la colinealidad detectada entre
+# salario_lag1_log/salario_roll3_log. LogisticRegressionCV aplica
+# regularización L2 con la fuerza (C) seleccionada por validación
+# cruzada, en vez de fijar C=1.0 por defecto sin justificación.
+clf_model = LogisticRegressionCV(Cs=np.logspace(-2, 2, 10), cv=5,
+                                  max_iter=2000, random_state=RANDOM_STATE,
+                                  class_weight='balanced', penalty='l2')
 clf_model.fit(X2_train_s, y2_train)
 y2_pred = clf_model.predict(X2_test_s)
 
@@ -733,22 +811,47 @@ plt.savefig(f"{CLEAN_DIR}/modelo2_confusion.png", dpi=150, bbox_inches='tight')
 plt.close()
 print("  Figura guardada: modelo2_confusion.png")
 
-# Gráfico 5: interpretabilidad global — coeficientes por clase (one-vs-rest)
-fig, axes = plt.subplots(1, len(clf_model.classes_), figsize=(6 * len(clf_model.classes_), 6),
-                          sharey=True)
-for ax_i, clase in zip(np.atleast_1d(axes), clf_model.classes_):
-    idx_clase = list(clf_model.classes_).index(clase)
-    coefs_clase = clf_model.coef_[idx_clase]
-    orden = np.argsort(coefs_clase)
-    ax_i.barh(np.array(feature_cols)[orden], coefs_clase[orden],
-              color=['#EA4335' if c < 0 else '#34A853' for c in coefs_clase[orden]],
-              alpha=0.85)
-    ax_i.axvline(0, color='gray', linewidth=0.8)
-    ax_i.set_title(f'Clase: {clase}', fontweight='bold')
-plt.suptitle('Modelo 2 — Importancia global de variables por clase', fontweight='bold')
-plt.tight_layout()
-plt.savefig(f"{CLEAN_DIR}/modelo2_coeficientes_por_clase.png", dpi=150, bbox_inches='tight')
-plt.close()
+# Gráfico 5: interpretabilidad global de coeficientes.
+# En clasificación BINARIA, scikit-learn devuelve un único vector de
+# coeficientes (coef_.shape == (1, n_features)): el modelo estima
+# directamente log-odds(clf_model.classes_[1]) frente a la clase de
+# referencia classes_[0], por lo que no hay "un gráfico por clase"
+# como en el caso multiclase (one-vs-rest) de versiones anteriores.
+# Un coeficiente positivo aumenta la probabilidad de classes_[1].
+if clf_model.coef_.shape[0] == 1:
+    clase_positiva = clf_model.classes_[1]
+    clase_referencia = clf_model.classes_[0]
+    coefs = clf_model.coef_[0]
+    orden = np.argsort(coefs)
+    fig, ax = plt.subplots(figsize=(8, 7))
+    ax.barh(np.array(feature_cols)[orden], coefs[orden],
+            color=['#EA4335' if c < 0 else '#34A853' for c in coefs[orden]],
+            alpha=0.85)
+    ax.axvline(0, color='gray', linewidth=0.8)
+    ax.set_title(f'Modelo 2 — Importancia global de variables\n'
+                 f'(positivo = mayor probabilidad de "{clase_positiva}", '
+                 f'referencia: "{clase_referencia}")', fontweight='bold')
+    ax.set_xlabel('Coeficiente (log-odds estandarizado)')
+    plt.tight_layout()
+    plt.savefig(f"{CLEAN_DIR}/modelo2_coeficientes_por_clase.png", dpi=150, bbox_inches='tight')
+    plt.close()
+else:
+    # Multiclase (one-vs-rest): un panel de coeficientes por clase.
+    fig, axes = plt.subplots(1, len(clf_model.classes_), figsize=(6 * len(clf_model.classes_), 6),
+                              sharey=True)
+    for ax_i, clase in zip(np.atleast_1d(axes), clf_model.classes_):
+        idx_clase = list(clf_model.classes_).index(clase)
+        coefs_clase = clf_model.coef_[idx_clase]
+        orden = np.argsort(coefs_clase)
+        ax_i.barh(np.array(feature_cols)[orden], coefs_clase[orden],
+                  color=['#EA4335' if c < 0 else '#34A853' for c in coefs_clase[orden]],
+                  alpha=0.85)
+        ax_i.axvline(0, color='gray', linewidth=0.8)
+        ax_i.set_title(f'Clase: {clase}', fontweight='bold')
+    plt.suptitle('Modelo 2 — Importancia global de variables por clase', fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(f"{CLEAN_DIR}/modelo2_coeficientes_por_clase.png", dpi=150, bbox_inches='tight')
+    plt.close()
 print("  Figura guardada: modelo2_coeficientes_por_clase.png")
 
 

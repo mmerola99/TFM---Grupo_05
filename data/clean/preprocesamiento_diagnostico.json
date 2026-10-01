@@ -1,0 +1,17 @@
+{
+  "skewness_original": {
+    "salario": 1.0618328688108323,
+    "gasto_total": 13.010727683033455
+  },
+  "variables_transformadas": [
+    "salario",
+    "gasto_total"
+  ],
+  "columnas_log_creadas": [
+    "salario_log",
+    "gasto_total_log"
+  ],
+  "umbral_skew": 1.0,
+  "nota_ahorro": "excluido de la evaluacion de transformacion logaritmica: contiene valores negativos y es la variable objetivo del Modelo 1, donde se prioriza la interpretabilidad en euros.",
+  "nota_encoding_perfil": "one-hot encoding (drop_first=True), no ordinal: \"perfil\" es una variable categorica nominal sin orden natural entre sus categorias."
+}
