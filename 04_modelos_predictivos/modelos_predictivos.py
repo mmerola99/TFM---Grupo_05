@@ -982,8 +982,42 @@ metricas = {
     'modelo1_r2': round(r2_lr, 4),
     'modelo1_n_features': len(feature_cols),
     'modelo1_features': feature_cols,
+    'modelo1_alpha_ridge': round(float(lr_model.alpha_), 4),
+    'modelo1_nota_colinealidad': (
+        'Colinealidad severa detectada entre salario_lag1_log y '
+        'salario_roll3_log (r=0.96): con regresion lineal simple (OLS) '
+        'esto produce coeficientes inestables y de signo economicamente '
+        'contraintuitivo en una de las dos variables, pese a que ambas '
+        'correlacionan positivamente con el ahorro de forma individual '
+        '(r=+0.85 con salario_roll3_log). Se usa RidgeCV (regularizacion '
+        'L2, con la fuerza alpha seleccionada por validacion cruzada '
+        'sobre el propio conjunto de entrenamiento) para estabilizar las '
+        'estimaciones sin descartar ninguna variable ni perder '
+        'interpretabilidad lineal. La prediccion agregada (MAE, R2) no '
+        'se ve afectada por este fenomeno; el efecto es unicamente sobre '
+        'la estabilidad individual de estos dos coeficientes. Ver '
+        'apartado 7.1 de la memoria para el detalle completo.'
+    ),
     'modelo2_accuracy': round(acc, 4),
     'modelo2_clases': list(clf_model.classes_),
+    'modelo2_esquema_clases': (
+        'Esquema binario (ahorro_adecuado / ahorro_insuficiente) por '
+        'mediana, sustituyendo el esquema anterior de terciles (3 '
+        'clases). Historial: (1) umbral absoluto fijo -> colapsaba a una '
+        'sola clase; (2) terciles -> resolvia el colapso pero la clase '
+        'central quedaba en una franja de solo ~4 puntos porcentuales, '
+        'estadisticamente no separable (recall 0.02); (3) se evaluo '
+        'tambien un esquema de 3 clases por igual anchura (8/20/72%), '
+        'que mejoraba el recall de la clase central (0.65) pero hacia '
+        "colapsar la precision de 'ahorro_insuficiente' (0.52 -> 0.20, "
+        'F1 0.61 -> 0.32); (4) esquema binario por mediana (adoptado): '
+        'un unico limite de decision elimina el problema estructural de '
+        'una clase atrapada entre dos fronteras, sin el trade-off de '
+        'precision observado en la alternativa de 3 clases. F1 macro '
+        'final: 0.72 (vs. 0.43 con terciles). Ver docstring de '
+        'compute_saving_profile_threshold() en 06_prepara_usuarios_tink.py '
+        'para el detalle completo de las 4 iteraciones.'
+    ),
     'modelo3_predicciones': df_pred[['fecha', 'ahorro_predicho']].to_dict('records'),
     'modelo3_metodo': (
         'Indice encadenado (chain-linked) sobre usuarios comunes entre '

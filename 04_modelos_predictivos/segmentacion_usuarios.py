@@ -25,6 +25,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+import sklearn
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
@@ -34,6 +35,15 @@ from preprocesamiento import codificar_perfil_onehot
 
 sns.set_style("whitegrid")
 sns.set_palette("Set2")
+
+# Por defecto, silhouette_score intenta reservar hasta 1 GiB de
+# memoria de una sola vez para la matriz de distancias por pares
+# (relevante con una submuestra de 20.000 usuarios). En equipos con
+# poca RAM libre esa reserva puede fallar (MemoryError). Se reduce
+# el tamaño de bloque interno de scikit-learn: el resultado numerico
+# es identico (se calcula por partes en vez de en un unico bloque),
+# solo cambia el consumo de memoria pico.
+sklearn.set_config(working_memory=64)
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'clean')
 RANDOM_STATE = 42

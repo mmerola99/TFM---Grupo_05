@@ -1,3 +1,5 @@
 ﻿accounts/
 data/raw/
 data/clean/*.csv
+
+data/clean/dataset_final_usuarios.csv
