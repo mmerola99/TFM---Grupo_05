@@ -1,154 +1,310 @@
 {
   "metodo": "K-Means sobre perfil comportamental agregado por usuario",
+  "features_clustering": [
+    "tasa_ahorro_media_w",
+    "volatilidad_ahorro",
+    "pct_gasto_vivienda",
+    "pct_gasto_alimentacion",
+    "pct_gasto_transporte",
+    "pct_gasto_ocio",
+    "pct_gasto_otros"
+  ],
+  "features_descriptivas_no_usadas_en_clustering": [
+    "ingreso_medio",
+    "ahorro_medio",
+    "tasa_ahorro_media",
+    "edad",
+    "n_meses_observados",
+    "perfil_medio",
+    "perfil_senior",
+    "perfil_freelance"
+  ],
   "k_elegido": 6,
-  "criterio_seleccion_k": "silueta maxima en rango k=3..6; se excluye k=2 por separar trivialmente solo por nivel de ingreso",
-  "silueta_k_elegido": 0.4908,
+  "criterio_seleccion_k": "maximo global del coeficiente de silueta en k=2..8",
+  "silueta_k_elegido": 0.6465,
   "evaluacion_k": [
     {
       "k": 2,
-      "inercia": 360306.4307531874,
-      "silueta": 0.33197636446705003
+      "inercia": 192013.85504545993,
+      "silueta": 0.42603607185297004
     },
     {
       "k": 3,
-      "inercia": 266793.21361432923,
-      "silueta": 0.41685781403687033
+      "inercia": 148128.051071663,
+      "silueta": 0.5240348528776527
     },
     {
       "k": 4,
-      "inercia": 225477.60740857112,
-      "silueta": 0.4312439139863609
+      "inercia": 107450.31280903841,
+      "silueta": 0.5591592449446177
     },
     {
       "k": 5,
-      "inercia": 186979.19286635885,
-      "silueta": 0.4818159904971786
+      "inercia": 77564.93834563672,
+      "silueta": 0.6049397072142826
     },
     {
       "k": 6,
-      "inercia": 147072.85158224893,
-      "silueta": 0.49082178312975255
+      "inercia": 54554.5311190075,
+      "silueta": 0.6464605742098463
     },
     {
       "k": 7,
-      "inercia": 123570.68370750046,
-      "silueta": 0.4962878859587132
+      "inercia": 45384.10628061133,
+      "silueta": 0.6338432808081321
     },
     {
       "k": 8,
-      "inercia": 101094.05310238466,
-      "silueta": 0.48441534744236525
+      "inercia": 36370.47614130427,
+      "silueta": 0.6424544627461276
     }
   ],
   "n_usuarios_segmentados": 40000,
+  "nmi_vs_perfil_origen_tink": 0.665,
+  "nmi_vs_perfil_laboral": 0.452,
+  "usuarios_por_origen_y_segmento": {
+    "expenseCheck_u24629591": {
+      "0": 0,
+      "1": 521,
+      "2": 11,
+      "3": 0,
+      "4": 0,
+      "5": 4467
+    },
+    "expenseCheck_u26350274": {
+      "0": 0,
+      "1": 4927,
+      "2": 0,
+      "3": 0,
+      "4": 0,
+      "5": 0
+    },
+    "u60341395": {
+      "0": 0,
+      "1": 0,
+      "2": 5040,
+      "3": 0,
+      "4": 0,
+      "5": 0
+    },
+    "u74445512": {
+      "0": 0,
+      "1": 1055,
+      "2": 1337,
+      "3": 2121,
+      "4": 34,
+      "5": 460
+    },
+    "u82144157": {
+      "0": 0,
+      "1": 0,
+      "2": 5066,
+      "3": 0,
+      "4": 0,
+      "5": 0
+    },
+    "u83188312": {
+      "0": 2165,
+      "1": 0,
+      "2": 2905,
+      "3": 0,
+      "4": 6,
+      "5": 0
+    },
+    "u86382190": {
+      "0": 0,
+      "1": 0,
+      "2": 4965,
+      "3": 0,
+      "4": 0,
+      "5": 0
+    },
+    "u98235448": {
+      "0": 0,
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "4": 4920,
+      "5": 0
+    }
+  },
   "resumen_por_cluster": [
     {
       "cluster": 0,
-      "ingreso_medio": 7544.35,
-      "tasa_ahorro_media": 90.77,
-      "volatilidad_ahorro": 0.11,
-      "edad": 32.57,
-      "pct_gasto_vivienda": 0.06,
-      "pct_gasto_alimentacion": 0.56,
-      "pct_gasto_transporte": 0.0,
-      "pct_gasto_ocio": 0.0,
-      "pct_gasto_otros": 0.38,
-      "perfil_medio": 0.0,
-      "perfil_senior": 1.0,
-      "perfil_freelance": 0.0,
-      "ahorro_medio": 6903.7,
-      "n_usuarios": 9916,
-      "pct_usuarios": 24.8
-    },
-    {
-      "cluster": 1,
-      "ingreso_medio": 2095.74,
-      "tasa_ahorro_media": 30.84,
-      "volatilidad_ahorro": 0.31,
-      "edad": 32.58,
-      "pct_gasto_vivienda": 0.03,
-      "pct_gasto_alimentacion": 0.28,
-      "pct_gasto_transporte": 0.1,
-      "pct_gasto_ocio": 0.02,
-      "pct_gasto_otros": 0.57,
-      "perfil_medio": 1.0,
-      "perfil_senior": 0.0,
-      "perfil_freelance": 0.0,
-      "ahorro_medio": 662.61,
-      "n_usuarios": 4977,
-      "pct_usuarios": 12.4
-    },
-    {
-      "cluster": 2,
-      "ingreso_medio": 2006.37,
-      "tasa_ahorro_media": 52.64,
-      "volatilidad_ahorro": 0.22,
-      "edad": 32.44,
+      "tasa_ahorro_media_w": -128.64,
+      "volatilidad_ahorro": 2.09,
       "pct_gasto_vivienda": 0.0,
       "pct_gasto_alimentacion": 0.0,
       "pct_gasto_transporte": 0.0,
       "pct_gasto_ocio": 0.0,
       "pct_gasto_otros": 1.0,
+      "ingreso_medio": 1622.64,
+      "ahorro_medio": -2411.97,
+      "tasa_ahorro_media": -149.22,
+      "edad": 32.57,
+      "n_meses_observados": 2.0,
       "perfil_medio": 0.0,
-      "perfil_senior": 0.28,
+      "perfil_senior": 0.0,
       "perfil_freelance": 0.0,
-      "ahorro_medio": 1477.11,
-      "n_usuarios": 18003,
-      "pct_usuarios": 45.0
+      "n_usuarios": 2165,
+      "pct_usuarios": 5.4
+    },
+    {
+      "cluster": 1,
+      "tasa_ahorro_media_w": 78.95,
+      "volatilidad_ahorro": 0.19,
+      "pct_gasto_vivienda": 0.01,
+      "pct_gasto_alimentacion": 0.65,
+      "pct_gasto_transporte": 0.01,
+      "pct_gasto_ocio": 0.01,
+      "pct_gasto_otros": 0.33,
+      "ingreso_medio": 5696.47,
+      "ahorro_medio": 4864.03,
+      "tasa_ahorro_media": 78.96,
+      "edad": 32.59,
+      "n_meses_observados": 10.46,
+      "perfil_medio": 0.16,
+      "perfil_senior": 0.84,
+      "perfil_freelance": 0.0,
+      "n_usuarios": 6503,
+      "pct_usuarios": 16.3
+    },
+    {
+      "cluster": 2,
+      "tasa_ahorro_media_w": 52.05,
+      "volatilidad_ahorro": 0.23,
+      "pct_gasto_vivienda": 0.0,
+      "pct_gasto_alimentacion": 0.01,
+      "pct_gasto_transporte": 0.0,
+      "pct_gasto_ocio": 0.0,
+      "pct_gasto_otros": 0.98,
+      "ingreso_medio": 2024.61,
+      "ahorro_medio": 1448.01,
+      "tasa_ahorro_media": 52.05,
+      "edad": 32.45,
+      "n_meses_observados": 16.47,
+      "perfil_medio": 0.07,
+      "perfil_senior": 0.26,
+      "perfil_freelance": 0.0,
+      "n_usuarios": 19324,
+      "pct_usuarios": 48.3
     },
     {
       "cluster": 3,
-      "ingreso_medio": 2005.86,
-      "tasa_ahorro_media": 85.83,
+      "tasa_ahorro_media_w": 30.82,
+      "volatilidad_ahorro": 0.31,
+      "pct_gasto_vivienda": 0.02,
+      "pct_gasto_alimentacion": 0.26,
+      "pct_gasto_transporte": 0.17,
+      "pct_gasto_ocio": 0.02,
+      "pct_gasto_otros": 0.52,
+      "ingreso_medio": 2096.05,
+      "ahorro_medio": 662.61,
+      "tasa_ahorro_media": 30.82,
+      "edad": 32.61,
+      "n_meses_observados": 3.0,
+      "perfil_medio": 1.0,
+      "perfil_senior": 0.0,
+      "perfil_freelance": 0.0,
+      "n_usuarios": 2121,
+      "pct_usuarios": 5.3
+    },
+    {
+      "cluster": 4,
+      "tasa_ahorro_media_w": 85.74,
       "volatilidad_ahorro": 0.05,
-      "edad": 32.49,
       "pct_gasto_vivienda": 0.0,
       "pct_gasto_alimentacion": 0.22,
       "pct_gasto_transporte": 0.0,
       "pct_gasto_ocio": 0.44,
       "pct_gasto_otros": 0.33,
+      "ingreso_medio": 2005.83,
+      "ahorro_medio": 1720.62,
+      "tasa_ahorro_media": 85.74,
+      "edad": 32.5,
+      "n_meses_observados": 38.71,
       "perfil_medio": 1.0,
       "perfil_senior": 0.0,
       "perfil_freelance": 0.0,
-      "ahorro_medio": 1722.26,
-      "n_usuarios": 4954,
+      "n_usuarios": 4960,
       "pct_usuarios": 12.4
     },
     {
-      "cluster": 4,
-      "ingreso_medio": 1622.06,
-      "tasa_ahorro_media": -153.16,
-      "volatilidad_ahorro": 2.16,
-      "edad": 32.6,
-      "pct_gasto_vivienda": 0.0,
-      "pct_gasto_alimentacion": 0.0,
+      "cluster": 5,
+      "tasa_ahorro_media_w": 87.99,
+      "volatilidad_ahorro": 0.07,
+      "pct_gasto_vivienda": 0.12,
+      "pct_gasto_alimentacion": 0.4,
       "pct_gasto_transporte": 0.0,
       "pct_gasto_ocio": 0.0,
-      "pct_gasto_otros": 1.0,
-      "perfil_medio": 0.0,
-      "perfil_senior": 0.0,
+      "pct_gasto_otros": 0.47,
+      "ingreso_medio": 8303.28,
+      "ahorro_medio": 7673.66,
+      "tasa_ahorro_media": 88.01,
+      "edad": 32.57,
+      "n_meses_observados": 10.25,
+      "perfil_medio": 0.09,
+      "perfil_senior": 0.91,
       "perfil_freelance": 0.0,
-      "ahorro_medio": -2474.81,
-      "n_usuarios": 2047,
-      "pct_usuarios": 5.1
+      "n_usuarios": 4927,
+      "pct_usuarios": 12.3
+    }
+  ],
+  "recomendaciones_por_segmento": [
+    {
+      "cluster": 1,
+      "usuarios_con_proyeccion": 6503,
+      "objetivo_personalizado_pct": 87.6,
+      "pct_ajuste_objetivo_global": 48.1,
+      "pct_ajuste_objetivo_personalizado": 45.0,
+      "brecha_mediana_global_pp": 8.4,
+      "brecha_mediana_personal_pp": 8.3,
+      "categoria_mas_sugerida": "otros",
+      "pct_categoria_mas_sugerida": 91.3
+    },
+    {
+      "cluster": 2,
+      "usuarios_con_proyeccion": 11379,
+      "objetivo_personalizado_pct": 73.9,
+      "pct_ajuste_objetivo_global": 60.6,
+      "pct_ajuste_objetivo_personalizado": 28.9,
+      "brecha_mediana_global_pp": 13.9,
+      "brecha_mediana_personal_pp": 7.6,
+      "categoria_mas_sugerida": "otros",
+      "pct_categoria_mas_sugerida": 99.3
+    },
+    {
+      "cluster": 3,
+      "usuarios_con_proyeccion": 2121,
+      "objetivo_personalizado_pct": 33.4,
+      "pct_ajuste_objetivo_global": 70.7,
+      "pct_ajuste_objetivo_personalizado": 10.6,
+      "brecha_mediana_global_pp": 26.7,
+      "brecha_mediana_personal_pp": 13.3,
+      "categoria_mas_sugerida": "otros",
+      "pct_categoria_mas_sugerida": 90.1
+    },
+    {
+      "cluster": 4,
+      "usuarios_con_proyeccion": 4954,
+      "objetivo_personalizado_pct": 86.2,
+      "pct_ajuste_objetivo_global": 59.4,
+      "pct_ajuste_objetivo_personalizado": 50.0,
+      "brecha_mediana_global_pp": 6.9,
+      "brecha_mediana_personal_pp": 6.0,
+      "categoria_mas_sugerida": "alimentacion",
+      "pct_categoria_mas_sugerida": 64.3
     },
     {
       "cluster": 5,
-      "ingreso_medio": 3565.83,
-      "tasa_ahorro_media": 72.98,
-      "volatilidad_ahorro": 0.45,
-      "edad": 32.8,
-      "pct_gasto_vivienda": 0.0,
-      "pct_gasto_alimentacion": 0.07,
-      "pct_gasto_transporte": 0.0,
-      "pct_gasto_ocio": 0.0,
-      "pct_gasto_otros": 0.93,
-      "perfil_medio": 0.0,
-      "perfil_senior": 0.0,
-      "perfil_freelance": 1.0,
-      "ahorro_medio": 3152.3,
-      "n_usuarios": 103,
-      "pct_usuarios": 0.3
+      "usuarios_con_proyeccion": 4927,
+      "objetivo_personalizado_pct": 93.8,
+      "pct_ajuste_objetivo_global": 24.8,
+      "pct_ajuste_objetivo_personalizado": 71.9,
+      "brecha_mediana_global_pp": 2.1,
+      "brecha_mediana_personal_pp": 4.1,
+      "categoria_mas_sugerida": "otros",
+      "pct_categoria_mas_sugerida": 82.3
     }
   ]
 }

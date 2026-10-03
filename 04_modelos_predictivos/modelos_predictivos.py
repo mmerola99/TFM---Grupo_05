@@ -2,31 +2,31 @@
 # modelos_predictivos.py
 # Modelos de Machine Learning — AI Financial Life Coach
 #
-# Modelo 1: Regresión Lineal   — predicción del ahorro mensual
-# Modelo 2: Regresión Logística — clasificación del perfil de ahorro
-# Modelo 3: Serie temporal      — proyección del ahorro agregado (6 meses)
+# Modelo 1: Regresión lineal regularizada (Ridge / Lasso) — ahorro mensual
+# Modelo 2: Regresión logística — clasificación binaria del perfil de ahorro
+# Modelo avanzado (rúbrica 4.3): ensemble HistGradientBoosting, contraste
+#           de los Modelos 1 y 2 frente a un modelo no lineal
+# Modelo 3: Serie temporal — proyección del ahorro agregado (6 meses),
+#           con backtest frente a pronósticos ingenuos
 # Modelo 1-bis: Proyección individual — ahorro del mes siguiente por usuario
 #
 # ------------------------------------------------------------
-# NOTA METODOLÓGICA (revisión de esta versión)
+# NOTA METODOLÓGICA
 # ------------------------------------------------------------
-# Los Modelos 1 y 2 predicen ahora el mes t a partir de información
+# Los Modelos 1 y 2 predicen el mes t a partir de información
 # disponible ANTES de ese mes (rezagos y medias móviles de los meses
 # t-1, t-2, t-3), en lugar de utilizar como predictores las propias
 # componentes del mismo mes que definen algebraicamente el objetivo
 # (ahorro = salario - gasto_total). Esta reformulación temporal evita
-# la fuga de información (data leakage) y obliga al modelo a aprender
-# un patrón de comportamiento financiero real, no una identidad
-# contable. La partición train/test se realiza además por usuario
-# (GroupShuffleSplit), de modo que los meses de un mismo usuario no
-# se repartan simultáneamente entre entrenamiento y prueba.
+# la fuga de información (data leakage).
 #
-# La arquitectura se organiza en funciones reutilizables para que el
-# re-entrenamiento periódico (Fase 2: incorporación de datos reales
-# procedentes de Tink, una vez transformados al mismo esquema de 17
-# columnas mediante el pipeline de preparación correspondiente) pueda
-# invocarse sin cambios estructurales, concatenando el dataset
-# sintético y el dataset real antes de llamar a build_lag_features().
+# Validación: partición train/test por usuario (GroupShuffleSplit,
+# 20% de usuarios en test) y, dentro del conjunto de entrenamiento,
+# ajuste de hiperparámetros mediante GridSearchCV con validación
+# cruzada agrupada por usuario (GroupKFold, 5 particiones): ningún
+# usuario aparece a la vez en los pliegues de entrenamiento y
+# validación, ni en train y test. Cada modelo se compara además con
+# pronósticos ingenuos (baselines) sobre el mismo conjunto de test.
 #
 # El preprocesamiento (codificación de 'perfil', evaluación de
 # asimetría y transformación logarítmica, escalado) está documentado
@@ -46,9 +46,12 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import GroupShuffleSplit, GroupKFold, GridSearchCV
+from sklearn.pipeline import Pipeline
 from sklearn.linear_model import (LinearRegression, LogisticRegression,
-                                   RidgeCV, LogisticRegressionCV)
+                                   Ridge, Lasso)
+from sklearn.ensemble import HistGradientBoostingRegressor, HistGradientBoostingClassifier
+from sklearn.metrics import f1_score
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import (mean_absolute_error, r2_score,
                               classification_report, accuracy_score,
@@ -74,11 +77,10 @@ CATEGORIAS = ['vivienda', 'alimentacion', 'transporte', 'ocio',
 # drop_first=True en codificar_perfil_onehot).
 PERFIL_ONEHOT_COLS = ['perfil_medio', 'perfil_senior', 'perfil_freelance']
 
-# Umbrales de perfil_ahorro: se leen del JSON generado por
-# 06_prepara_usuarios_tink.py (terciles empiricos de este dataset) para
-# mantener coherencia con el target del Modelo 2. Fallback a los
-# umbral absoluto clasico (15%) si el archivo no existe (p. ej. al
-# trabajar con el dataset sintetico original en _archivo_legacy).
+# Umbral de perfil_ahorro: se lee del JSON generado por
+# 06_prepara_usuarios_tink.py (mediana empírica de este dataset) para
+# mantener coherencia con el target del Modelo 2. Fallback a un umbral
+# absoluto clásico (15%) si el archivo no existe.
 #
 # Esquema binario (2 clases: ahorro_insuficiente / ahorro_adecuado) por
 # mediana, en lugar del esquema original de terciles (3 clases): se
@@ -385,6 +387,61 @@ print(f"Filas de proyección a T+1 construidas: {df_pronostico_base.shape[0]:,} 
 
 
 # ============================================================
+# AJUSTE DE HIPERPARÁMETROS CON VALIDACIÓN CRUZADA AGRUPADA
+# ============================================================
+
+N_FOLDS_CV = 5
+
+# Paralelismo de la búsqueda de hiperparámetros. Por defecto 1 (secuencial):
+# con n_jobs=-1 joblib lanza un proceso por núcleo y cada uno carga su propia
+# copia de los ~420.000 registros de entrenamiento, lo que agota la memoria en
+# equipos con muchos núcleos y poca RAM libre. Los resultados son idénticos con
+# cualquier valor; solo cambia el tiempo de ejecución. Puede aumentarse con la
+# variable de entorno AFILC_N_JOBS (p. ej. AFILC_N_JOBS=2).
+N_JOBS = int(os.environ.get('AFILC_N_JOBS', '1'))
+
+
+def ajustar_hiperparametros(candidatos, X, y, groups, scoring):
+    """Selecciona modelo e hiperparámetros mediante GridSearchCV con
+    validación cruzada agrupada por usuario (GroupKFold).
+
+    candidatos: dict {nombre: (estimador, rejilla_de_parametros)}.
+    Los estimadores lineales se envuelven en un Pipeline con
+    StandardScaler, de modo que el escalador se ajusta dentro de cada
+    pliegue y no usa estadísticos de los pliegues de validación.
+
+    Se usa GroupKFold (y no un KFold simple) porque cada usuario
+    aporta varios meses: con un KFold simple, meses del mismo usuario
+    caerían a la vez en entrenamiento y validación, y la puntuación de
+    validación (y por tanto la elección de hiperparámetros) quedaría
+    sesgada al alza.
+
+    Devuelve (nombre_ganador, mejores_parametros, tabla_cv), donde
+    tabla_cv recoge la puntuación media y la desviación típica entre
+    pliegues de cada combinación evaluada.
+    """
+    gkf = GroupKFold(n_splits=N_FOLDS_CV)
+    filas, mejor = [], None
+    for nombre, (estimador, rejilla) in candidatos.items():
+        n_jobs = 1 if 'HGB' in nombre else N_JOBS  # HGB ya paraleliza internamente
+        gs = GridSearchCV(estimador, rejilla, cv=gkf, scoring=scoring,
+                          n_jobs=n_jobs, refit=False)
+        gs.fit(X, y, groups=groups)
+        res = gs.cv_results_
+        for params, media, std in zip(res['params'], res['mean_test_score'],
+                                      res['std_test_score']):
+            filas.append({'modelo': nombre,
+                          'parametros': {k.replace('m__', ''): v for k, v in params.items()},
+                          'cv_media': float(media), 'cv_std': float(std)})
+            print(f"    {nombre:<10} {str({k.replace('m__', ''): v for k, v in params.items()}):<55}"
+                  f" cv={media:.4f} ± {std:.4f}")
+        if mejor is None or gs.best_score_ > mejor[2]:
+            mejor = (nombre, {k.replace('m__', ''): v for k, v in gs.best_params_.items()},
+                     gs.best_score_)
+    return mejor[0], mejor[1], pd.DataFrame(filas)
+
+
+# ============================================================
 # MODELO 1 — REGRESIÓN LINEAL (reformulación temporal)
 # Objetivo: predecir el ahorro del mes t a partir del histórico
 #           t-1, t-2, t-3 del propio usuario (sin usar componentes
@@ -392,7 +449,7 @@ print(f"Filas de proyección a T+1 construidas: {df_pronostico_base.shape[0]:,} 
 # ============================================================
 
 print("\n" + "=" * 60)
-print("MODELO 1 — Regresión Lineal: predicción del ahorro mensual")
+print("MODELO 1 — Regresión lineal regularizada: predicción del ahorro mensual")
 print("(a partir del histórico de los 3 meses anteriores del usuario)")
 print("=" * 60)
 
@@ -407,31 +464,89 @@ scaler = StandardScaler()
 X_train_s = scaler.fit_transform(X_train)
 X_test_s = scaler.transform(X_test)
 
-# Se detecta colinealidad severa entre features de salario derivadas
-# de la misma variable (salario_lag1_log vs. salario_roll3_log,
-# r=0.96): con OLS puro esto produce coeficientes inestables y de
-# signo económicamente contraintuitivo (ver preprocesamiento.py y la
-# nota en el apartado 7.1 de la memoria), aunque la predicción
-# agregada no se vea afectada. Se usa RidgeCV (regularización L2, con
-# la fuerza de regularización alpha seleccionada por validación
-# cruzada sobre el propio conjunto de entrenamiento) en lugar de
-# LinearRegression: estabiliza las estimaciones de coeficientes ante
-# variables correlacionadas sin descartar ninguna, y conserva la
-# interpretabilidad lineal completa (misma descomposición
-# coeficiente × valor estandarizado usada en explicacion_local()).
-lr_model = RidgeCV(alphas=np.logspace(-2, 4, 25))
+print(f"\n  Usuarios train: {train_df['user_id'].nunique():,} | "
+      f"Usuarios test: {test_df['user_id'].nunique():,}")
+print(f"  Filas  train: {len(X_train):,} | Filas  test: {len(X_test):,}")
+
+# Ajuste de hiperparámetros: se comparan dos regularizaciones lineales
+# (Ridge, L2; Lasso, L1) con GroupKFold sobre el conjunto de
+# entrenamiento. Ambas conservan la interpretabilidad lineal que exige
+# la capa prescriptiva (descomposición coeficiente × valor
+# estandarizado, explicacion_local()). Lasso se incluye además porque,
+# al poder anular coeficientes, podría resolver la colinealidad entre
+# salario_lag1_log y salario_roll3_log (r=0,96) descartando una de las
+# dos variables; el resultado se documenta más abajo.
+print("\n  Ajuste de hiperparámetros (GridSearchCV + GroupKFold, métrica: MAE):")
+candidatos_m1 = {
+    'Ridge': (Pipeline([('sc', StandardScaler()), ('m', Ridge())]),
+              {'m__alpha': [0.01, 0.1, 1, 10, 100, 1000, 10000]}),
+    'Lasso': (Pipeline([('sc', StandardScaler()), ('m', Lasso(max_iter=5000))]),
+              {'m__alpha': [0.1, 1, 5, 10]}),
+}
+nombre_m1, params_m1, cv_m1 = ajustar_hiperparametros(
+    candidatos_m1, X_train, y_train, train_df['user_id'], 'neg_mean_absolute_error')
+print(f"  Seleccionado: {nombre_m1} {params_m1} "
+      f"(MAE CV = {-cv_m1['cv_media'].max():.2f} €)")
+
+ClaseM1 = Ridge if nombre_m1 == 'Ridge' else Lasso
+lr_model = ClaseM1(alpha=params_m1['alpha'],
+                   **({'max_iter': 5000} if nombre_m1 == 'Lasso' else {}))
 lr_model.fit(X_train_s, y_train)
 y_pred_lr = lr_model.predict(X_test_s)
 
 mae_lr = mean_absolute_error(y_test, y_pred_lr)
 r2_lr = r2_score(y_test, y_pred_lr)
+print(f"  MAE test:  {mae_lr:.2f} € (error medio absoluto)")
+print(f"  R² test:   {r2_lr:.4f} (varianza explicada)")
 
-print(f"\n  Usuarios train: {train_df['user_id'].nunique():,} | "
-      f"Usuarios test: {test_df['user_id'].nunique():,}")
-print(f"  Filas  train: {len(X_train):,} | Filas  test: {len(X_test):,}")
-print(f"  Alpha seleccionado (RidgeCV): {lr_model.alpha_:.3f}")
-print(f"  MAE:  {mae_lr:.2f} € (error medio absoluto)")
-print(f"  R²:   {r2_lr:.4f} (varianza explicada)")
+# Baselines (pronósticos ingenuos sin modelo) sobre el mismo test:
+# imprescindibles para valorar cuánto aporta realmente el modelo.
+baselines_m1 = {
+    'Persistencia (ahorro del mes anterior)': test_df['ahorro_lag1'],
+    'Media móvil de 3 meses (ahorro_roll3)': test_df['ahorro_roll3'],
+    'Media del conjunto de entrenamiento': np.full(len(test_df), y_train.mean()),
+}
+baselines_m1_out = {}
+print("\n  Baselines sobre el mismo conjunto de test:")
+for nombre_b, pred_b in baselines_m1.items():
+    mae_b, r2_b = mean_absolute_error(y_test, pred_b), r2_score(y_test, pred_b)
+    baselines_m1_out[nombre_b] = {'mae': round(float(mae_b), 2), 'r2': round(float(r2_b), 4)}
+    print(f"    {nombre_b:<42} MAE {mae_b:8.2f} €  R² {r2_b:.4f}")
+
+# Colinealidad salario_lag1_log / salario_roll3_log (r=0,96): se
+# comparan los coeficientes de OLS sin regularizar y del modelo
+# seleccionado, y se mide su estabilidad entre los 5 pliegues de la
+# validación cruzada agrupada. Resultado documentado en la memoria:
+# la regularización elegida por validación cruzada apenas modifica los
+# coeficientes (la validación cruzada optimiza el error de predicción,
+# no la interpretabilidad), pero su signo y magnitud son estables entre
+# pliegues: no se trata de inestabilidad numérica, sino de un efecto
+# condicional (de supresión) de dos variables casi redundantes.
+vars_salario = ['salario_lag1_log', 'salario_roll3_log']
+idx_sal = [feature_cols.index(v) for v in vars_salario]
+ols_ref = LinearRegression().fit(X_train_s, y_train)
+coefs_pliegues = []
+for tr_idx, _ in GroupKFold(n_splits=N_FOLDS_CV).split(X_train, y_train, train_df['user_id']):
+    sc_f = StandardScaler().fit(X_train.iloc[tr_idx])
+    m_f = ClaseM1(alpha=params_m1['alpha'],
+                  **({'max_iter': 5000} if nombre_m1 == 'Lasso' else {}))
+    m_f.fit(sc_f.transform(X_train.iloc[tr_idx]), y_train.iloc[tr_idx])
+    coefs_pliegues.append(m_f.coef_[idx_sal])
+coefs_pliegues = np.array(coefs_pliegues)
+estabilidad_coef = {}
+print("\n  Colinealidad — coeficientes de las variables de salario:")
+for j, v in enumerate(vars_salario):
+    estabilidad_coef[v] = {
+        'ols': round(float(ols_ref.coef_[idx_sal[j]]), 1),
+        'modelo_seleccionado': round(float(lr_model.coef_[idx_sal[j]]), 1),
+        'media_pliegues': round(float(coefs_pliegues[:, j].mean()), 1),
+        'std_pliegues': round(float(coefs_pliegues[:, j].std()), 1),
+    }
+    print(f"    {v:<20} OLS {estabilidad_coef[v]['ols']:>9.1f} | "
+          f"{nombre_m1} {estabilidad_coef[v]['modelo_seleccionado']:>9.1f} | "
+          f"pliegues {estabilidad_coef[v]['media_pliegues']:.1f} ± {estabilidad_coef[v]['std_pliegues']:.1f}")
+corr_sal = float(train_df[vars_salario].corr().iloc[0, 1])
+corr_roll_ahorro = float(train_df[['salario_roll3_log', 'ahorro']].corr().iloc[0, 1])
 
 # Gráfico 1: Real vs Predicho
 fig, ax = plt.subplots(figsize=(8, 5))
@@ -444,7 +559,7 @@ lim = [min(y_test.min(), y_pred_lr.min()),
 ax.plot(lim, lim, 'r--', linewidth=1.5, label='Predicción perfecta')
 ax.set_xlabel('Ahorro real (€)')
 ax.set_ylabel('Ahorro predicho (€)')
-ax.set_title('Modelo 1 — Regresión Lineal: Ahorro real vs. predicho',
+ax.set_title(f'Modelo 1 — Regresión lineal ({nombre_m1}): ahorro real vs. predicho',
              fontweight='bold')
 ax.legend()
 plt.tight_layout()
@@ -462,8 +577,8 @@ fig, ax = plt.subplots(figsize=(8, 7))
 colors = ['#EA4335' if c < 0 else '#34A853' for c in coef_df['coeficiente']]
 ax.barh(coef_df['variable'], coef_df['coeficiente'], color=colors, alpha=0.85)
 ax.axvline(0, color='gray', linewidth=0.8)
-ax.set_title('Modelo 1 — Importancia global de variables (coeficientes estandarizados)',
-             fontweight='bold')
+ax.set_title(f'Modelo 1 ({nombre_m1}) — Importancia global de variables\n'
+             '(coeficientes estandarizados)', fontweight='bold')
 ax.set_xlabel('Coeficiente (impacto en el ahorro)')
 plt.tight_layout()
 plt.savefig(f"{CLEAN_DIR}/modelo1_coeficientes.png", dpi=150, bbox_inches='tight')
@@ -507,8 +622,8 @@ ahorro_predicho_usuario = lr_model.predict(X_usuarios_s)
 # Salario estimado del mes T+1: a falta de un modelo específico de
 # ingresos, se emplea como aproximación el salario del último mes real
 # conocido (salario_lag1 de la fila de pronóstico). Se documenta como
-# limitación: una futura Fase 2 podría sustituir esta aproximación por
-# un modelo de ingresos propio.
+# limitación: una línea de trabajo futura es sustituir esta
+# aproximación por un modelo de ingresos propio.
 salario_proxy = df_pronostico_base['salario_lag1']
 tasa_predicha = (ahorro_predicho_usuario / salario_proxy.replace(0, np.nan) * 100).round(2)
 
@@ -782,22 +897,54 @@ scaler2 = StandardScaler()
 X2_train_s = scaler2.fit_transform(X2_train)
 X2_test_s = scaler2.transform(X2_test)
 
-# Misma razón que en el Modelo 1 (ver nota junto a RidgeCV): las
-# features de entrada comparten la colinealidad detectada entre
-# salario_lag1_log/salario_roll3_log. LogisticRegressionCV aplica
-# regularización L2 con la fuerza (C) seleccionada por validación
-# cruzada, en vez de fijar C=1.0 por defecto sin justificación.
-clf_model = LogisticRegressionCV(Cs=np.logspace(-2, 2, 10), cv=5,
-                                  max_iter=2000, random_state=RANDOM_STATE,
-                                  class_weight='balanced', penalty='l2')
+# Ajuste de hiperparámetros: fuerza de regularización C de la
+# regresión logística (L2, ponderación de clases balanceada),
+# seleccionada con GridSearchCV + GroupKFold optimizando F1 macro.
+print(f"\n  Filas train: {len(X2_train):,} | Filas test: {len(X2_test):,}")
+print("\n  Ajuste de hiperparámetros (GridSearchCV + GroupKFold, métrica: F1 macro):")
+candidatos_m2 = {
+    'Logistica': (Pipeline([('sc', StandardScaler()),
+                            ('m', LogisticRegression(max_iter=2000, class_weight='balanced'))]),
+                  {'m__C': [0.001, 0.01, 0.1, 1, 10, 100]}),
+}
+_, params_m2, cv_m2 = ajustar_hiperparametros(
+    candidatos_m2, X2_train, y2_train, train_df2['user_id'], 'f1_macro')
+print(f"  C seleccionado: {params_m2['C']} (F1 macro CV = {cv_m2['cv_media'].max():.4f})")
+
+clf_model = LogisticRegression(C=params_m2['C'], max_iter=2000, class_weight='balanced')
 clf_model.fit(X2_train_s, y2_train)
 y2_pred = clf_model.predict(X2_test_s)
 
 acc = accuracy_score(y2_test, y2_pred)
-print(f"\n  Filas train: {len(X2_train):,} | Filas test: {len(X2_test):,}")
-print(f"  Accuracy: {acc:.4f}")
+f1_macro_m2 = f1_score(y2_test, y2_pred, average='macro')
+print(f"  Accuracy test: {acc:.4f} | F1 macro test: {f1_macro_m2:.4f}")
 print(f"\n  Classification Report:")
 print(classification_report(y2_test, y2_pred))
+
+# Baselines de clasificación sobre el mismo test
+clase_mayoritaria = y2_train.value_counts().idxmax()
+pred_mayoritaria = np.full(len(y2_test), clase_mayoritaria)
+# La clase del mes anterior se toma del histórico completo (df_raw) y
+# se une por usuario y mes (train_df/test_df tienen índices reiniciados).
+_orden = df_raw.sort_values(['user_id', 'fecha_dt'])
+_prev = _orden.assign(clase_previa=_orden.groupby('user_id')['perfil_ahorro'].shift(1))[
+    ['user_id', 'fecha', 'clase_previa']]
+_test_prev = test_df2[['user_id', 'fecha']].merge(_prev, on=['user_id', 'fecha'], how='left')
+_mask_prev = _test_prev['clase_previa'].notna().values
+baselines_m2_out = {
+    'Clase mayoritaria': {
+        'accuracy': round(float(accuracy_score(y2_test, pred_mayoritaria)), 4),
+        'f1_macro': round(float(f1_score(y2_test, pred_mayoritaria, average='macro')), 4)},
+    'Persistencia (clase del mes anterior)': {
+        'accuracy': round(float(accuracy_score(y2_test.values[_mask_prev],
+                                               _test_prev['clase_previa'].values[_mask_prev])), 4),
+        'f1_macro': round(float(f1_score(y2_test.values[_mask_prev],
+                                         _test_prev['clase_previa'].values[_mask_prev],
+                                         average='macro')), 4)},
+}
+print("  Baselines sobre el mismo conjunto de test:")
+for nombre_b, met in baselines_m2_out.items():
+    print(f"    {nombre_b:<40} accuracy {met['accuracy']:.4f}  F1 macro {met['f1_macro']:.4f}")
 
 # Gráfico 4: Matriz de confusión
 fig, ax = plt.subplots(figsize=(7, 5))
@@ -856,6 +1003,86 @@ print("  Figura guardada: modelo2_coeficientes_por_clase.png")
 
 
 # ============================================================
+# MODELO AVANZADO (rúbrica 4.3) — ENSEMBLE: HistGradientBoosting
+# Objetivo: contrastar los Modelos 1 y 2 (lineales, interpretables)
+#           con un ensemble de árboles por gradient boosting, capaz de
+#           capturar no linealidades e interacciones, sobre exactamente
+#           las mismas variables, partición y validación cruzada.
+# Valor añadido: cuantifica el coste en precisión de exigir
+#           interpretabilidad lineal (requisito de la capa prescriptiva)
+#           y comprueba si el techo de rendimiento del Modelo 2 se debe
+#           al algoritmo o a la información disponible en las variables.
+# ============================================================
+
+print("\n" + "=" * 60)
+print("MODELO AVANZADO — Ensemble HistGradientBoosting (regresión y clasificación)")
+print("=" * 60)
+
+# Nota: con >10.000 filas, HistGradientBoosting activa por defecto la
+# parada temprana (early stopping) sobre un 10% de validación interna,
+# por lo que el número de iteraciones lo decide el propio algoritmo; la
+# rejilla se centra en la tasa de aprendizaje y la complejidad de cada
+# árbol (número máximo de hojas).
+rejilla_hgb = {'learning_rate': [0.05, 0.1], 'max_leaf_nodes': [15, 31, 63]}
+
+print("\n  Regresión — ajuste de hiperparámetros (GroupKFold, MAE):")
+_, params_hgb_r, cv_hgb_r = ajustar_hiperparametros(
+    {'HGB_reg': (HistGradientBoostingRegressor(random_state=RANDOM_STATE), rejilla_hgb)},
+    X_train, y_train, train_df['user_id'], 'neg_mean_absolute_error')
+hgb_reg = HistGradientBoostingRegressor(random_state=RANDOM_STATE, **params_hgb_r)
+hgb_reg.fit(X_train, y_train)
+y_pred_hgb = hgb_reg.predict(X_test)
+mae_hgb, r2_hgb = mean_absolute_error(y_test, y_pred_hgb), r2_score(y_test, y_pred_hgb)
+print(f"  Seleccionado {params_hgb_r} | MAE test {mae_hgb:.2f} € | R² test {r2_hgb:.4f} "
+      f"(Modelo 1: MAE {mae_lr:.2f} €, R² {r2_lr:.4f})")
+
+print("\n  Clasificación — ajuste de hiperparámetros (GroupKFold, F1 macro):")
+_, params_hgb_c, cv_hgb_c = ajustar_hiperparametros(
+    {'HGB_clf': (HistGradientBoostingClassifier(random_state=RANDOM_STATE,
+                                                class_weight='balanced'), rejilla_hgb)},
+    X2_train, y2_train, train_df2['user_id'], 'f1_macro')
+hgb_clf = HistGradientBoostingClassifier(random_state=RANDOM_STATE, class_weight='balanced',
+                                         **params_hgb_c)
+hgb_clf.fit(X2_train, y2_train)
+y2_pred_hgb = hgb_clf.predict(X2_test)
+acc_hgb = accuracy_score(y2_test, y2_pred_hgb)
+f1_hgb = f1_score(y2_test, y2_pred_hgb, average='macro')
+print(f"  Seleccionado {params_hgb_c} | accuracy test {acc_hgb:.4f} | F1 macro test {f1_hgb:.4f} "
+      f"(Modelo 2: accuracy {acc:.4f}, F1 macro {f1_macro_m2:.4f})")
+
+# Gráfico comparativo: baselines vs. modelo lineal vs. ensemble
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+etiquetas_r = ['Media\nentrenamiento', 'Persistencia\n(mes anterior)', 'Media móvil\n3 meses',
+               f'Modelo 1\n({nombre_m1})', 'Ensemble\n(HGB)']
+valores_r = [baselines_m1_out['Media del conjunto de entrenamiento']['mae'],
+             baselines_m1_out['Persistencia (ahorro del mes anterior)']['mae'],
+             baselines_m1_out['Media móvil de 3 meses (ahorro_roll3)']['mae'],
+             mae_lr, mae_hgb]
+colores_r = ['#BDBDBD', '#BDBDBD', '#BDBDBD', '#1A73E8', '#34A853']
+barras = axes[0].bar(etiquetas_r, valores_r, color=colores_r)
+axes[0].bar_label(barras, fmt='%.0f €', padding=3)
+axes[0].set_title('Regresión del ahorro — MAE en test (menor es mejor)', fontweight='bold')
+axes[0].set_ylabel('MAE (€)')
+axes[0].set_ylim(0, max(valores_r) * 1.15)
+
+etiquetas_c = ['Clase\nmayoritaria', 'Persistencia\n(clase mes anterior)',
+               'Modelo 2\n(Logística)', 'Ensemble\n(HGB)']
+valores_c = [baselines_m2_out['Clase mayoritaria']['f1_macro'],
+             baselines_m2_out['Persistencia (clase del mes anterior)']['f1_macro'],
+             f1_macro_m2, f1_hgb]
+barras = axes[1].bar(etiquetas_c, valores_c, color=['#BDBDBD', '#BDBDBD', '#1A73E8', '#34A853'])
+axes[1].bar_label(barras, fmt='%.3f', padding=3)
+axes[1].set_title('Clasificación del perfil de ahorro — F1 macro en test (mayor es mejor)',
+                  fontweight='bold')
+axes[1].set_ylabel('F1 macro')
+axes[1].set_ylim(0, 1)
+plt.tight_layout()
+plt.savefig(f"{CLEAN_DIR}/modelo_avanzado_comparacion.png", dpi=150, bbox_inches='tight')
+plt.close()
+print("  Figura guardada: modelo_avanzado_comparacion.png")
+
+
+# ============================================================
 # MODELO 3 — SERIE TEMPORAL (índice encadenado por composición estable)
 # Objetivo: proyectar el ahorro medio de la población de usuarios
 #           para los próximos 6 meses.
@@ -904,6 +1131,30 @@ y_ts = ahorro_medio['ahorro_medio']
 
 ts_model = LinearRegression()
 ts_model.fit(X_ts, y_ts)
+r2_ts_insample = ts_model.score(X_ts, y_ts)
+
+# Validación del Modelo 3 — backtest: se reentrena el mismo modelo
+# excluyendo los 6 últimos meses observados y se comparan sus
+# predicciones para esos meses con tres pronósticos ingenuos. Es la
+# forma estándar de validar un modelo de series temporales (validación
+# fuera de muestra respetando el orden temporal).
+H_BACKTEST = 6
+ts_bt = LinearRegression().fit(X_ts.iloc[:-H_BACKTEST], y_ts.iloc[:-H_BACKTEST])
+y_bt_real = y_ts.iloc[-H_BACKTEST:].values
+pronosticos_bt = {
+    'Modelo 3 (tendencia + estacionalidad)': ts_bt.predict(X_ts.iloc[-H_BACKTEST:]),
+    'Ingenuo: último valor observado': np.full(H_BACKTEST, y_ts.iloc[-H_BACKTEST - 1]),
+    'Ingenuo: media histórica': np.full(H_BACKTEST, y_ts.iloc[:-H_BACKTEST].mean()),
+    'Ingenuo estacional: mismo mes del año anterior': y_ts.iloc[-H_BACKTEST - 12:-12].values,
+}
+backtest_m3 = {k: round(float(mean_absolute_error(y_bt_real, v)), 2)
+               for k, v in pronosticos_bt.items()}
+print(f"\n  R² del ajuste dentro de muestra: {r2_ts_insample:.3f}")
+print(f"  Variabilidad de la serie: desviación típica {y_ts.std():.2f} € "
+      f"sobre un nivel medio de {y_ts.mean():.2f} €")
+print(f"  Backtest (últimos {H_BACKTEST} meses, MAE):")
+for k, v in backtest_m3.items():
+    print(f"    {k:<48} {v:7.2f} €")
 
 ultima_fecha = ahorro_medio['fecha_dt'].max()
 fechas_futuras = pd.date_range(ultima_fecha + pd.DateOffset(months=1), periods=6, freq='MS')
@@ -982,24 +1233,50 @@ metricas = {
     'modelo1_r2': round(r2_lr, 4),
     'modelo1_n_features': len(feature_cols),
     'modelo1_features': feature_cols,
-    'modelo1_alpha_ridge': round(float(lr_model.alpha_), 4),
+    'validacion': (f'GroupShuffleSplit por user_id (20% usuarios en test); ajuste de '
+                   f'hiperparametros con GridSearchCV + GroupKFold ({N_FOLDS_CV} pliegues) '
+                   f'sobre el conjunto de entrenamiento'),
+    'modelo1_modelo_seleccionado': nombre_m1,
+    'modelo1_hiperparametros': params_m1,
+    'modelo1_cv_resultados': cv_m1.assign(cv_mae=-cv_m1['cv_media'])[
+        ['modelo', 'parametros', 'cv_mae', 'cv_std']].round(2).to_dict('records'),
+    'modelo1_baselines_test': baselines_m1_out,
+    'modelo1_colinealidad': {
+        'corr_salario_lag1_log_vs_salario_roll3_log': round(corr_sal, 3),
+        'corr_salario_roll3_log_vs_ahorro': round(corr_roll_ahorro, 3),
+        'coeficientes': estabilidad_coef,
+    },
     'modelo1_nota_colinealidad': (
-        'Colinealidad severa detectada entre salario_lag1_log y '
-        'salario_roll3_log (r=0.96): con regresion lineal simple (OLS) '
-        'esto produce coeficientes inestables y de signo economicamente '
-        'contraintuitivo en una de las dos variables, pese a que ambas '
-        'correlacionan positivamente con el ahorro de forma individual '
-        '(r=+0.85 con salario_roll3_log). Se usa RidgeCV (regularizacion '
-        'L2, con la fuerza alpha seleccionada por validacion cruzada '
-        'sobre el propio conjunto de entrenamiento) para estabilizar las '
-        'estimaciones sin descartar ninguna variable ni perder '
-        'interpretabilidad lineal. La prediccion agregada (MAE, R2) no '
-        'se ve afectada por este fenomeno; el efecto es unicamente sobre '
-        'la estabilidad individual de estos dos coeficientes. Ver '
-        'apartado 7.1 de la memoria para el detalle completo.'
+        'salario_lag1_log y salario_roll3_log estan fuertemente correlacionadas '
+        f'(r={corr_sal:.2f}). salario_roll3_log recibe un coeficiente negativo pese '
+        f'a correlacionar positivamente con el ahorro (r={corr_roll_ahorro:+.2f}). '
+        'La regularizacion seleccionada por validacion cruzada (Ridge o Lasso) apenas '
+        'modifica los coeficientes respecto a OLS, porque la validacion cruzada '
+        'optimiza el error de prediccion, no la interpretabilidad; y Lasso no anula '
+        'ninguna de las dos variables. El coeficiente es estable entre pliegues de '
+        'la validacion cruzada, por lo que no es inestabilidad numerica sino un '
+        'efecto condicional (de supresion): mide el efecto de salario_roll3_log '
+        'manteniendo constantes el salario del mes anterior y los rezagos de ahorro, '
+        'no su efecto marginal. Los coeficientes de ambas variables de salario deben '
+        'interpretarse conjuntamente.'
     ),
     'modelo2_accuracy': round(acc, 4),
+    'modelo2_f1_macro': round(float(f1_macro_m2), 4),
+    'modelo2_C_seleccionado': params_m2['C'],
+    'modelo2_cv_resultados': cv_m2[['parametros', 'cv_media', 'cv_std']].round(4).to_dict('records'),
+    'modelo2_baselines_test': baselines_m2_out,
     'modelo2_clases': list(clf_model.classes_),
+    'modelo_avanzado_ensemble': {
+        'algoritmo': 'HistGradientBoosting (gradient boosting de arboles)',
+        'regresion': {'hiperparametros': params_hgb_r, 'mae_test': round(float(mae_hgb), 2),
+                      'r2_test': round(float(r2_hgb), 4),
+                      'cv_resultados': cv_hgb_r.assign(cv_mae=-cv_hgb_r['cv_media'])[
+                          ['parametros', 'cv_mae', 'cv_std']].round(2).to_dict('records')},
+        'clasificacion': {'hiperparametros': params_hgb_c, 'accuracy_test': round(float(acc_hgb), 4),
+                          'f1_macro_test': round(float(f1_hgb), 4),
+                          'cv_resultados': cv_hgb_c[['parametros', 'cv_media', 'cv_std']]
+                          .round(4).to_dict('records')},
+    },
     'modelo2_esquema_clases': (
         'Esquema binario (ahorro_adecuado / ahorro_insuficiente) por '
         'mediana, sustituyendo el esquema anterior de terciles (3 '
@@ -1014,7 +1291,10 @@ metricas = {
         'un unico limite de decision elimina el problema estructural de '
         'una clase atrapada entre dos fronteras, sin el trade-off de '
         'precision observado en la alternativa de 3 clases. F1 macro '
-        'final: 0.72 (vs. 0.43 con terciles). Ver docstring de '
+        'final: 0.72 (vs. 0.43 con terciles; ambas cifras no son '
+        'directamente comparables, al cambiar el numero de clases: el F1 '
+        'macro de referencia por azar es ~0.33 con 3 clases y ~0.50 con 2). '
+        'Ver docstring de '
         'compute_saving_profile_threshold() en 06_prepara_usuarios_tink.py '
         'para el detalle completo de las 4 iteraciones.'
     ),
@@ -1027,6 +1307,10 @@ metricas = {
         'distintas ventanas temporales de los 8 perfiles reales de '
         'origen Tink). Ver docstring de build_chained_savings_index().'
     ),
+    'modelo3_r2_insample': round(float(r2_ts_insample), 3),
+    'modelo3_std_serie': round(float(y_ts.std()), 2),
+    'modelo3_nivel_medio_serie': round(float(y_ts.mean()), 2),
+    'modelo3_backtest_mae_6meses': backtest_m3,
     'modelo3_usuarios_comunes_min': int(ahorro_medio['n_usuarios_comunes'].dropna().min()),
     'modelo3_usuarios_comunes_mediana': int(ahorro_medio['n_usuarios_comunes'].dropna().median()),
     'particion': 'GroupShuffleSplit por user_id (20% usuarios en test)',
@@ -1048,14 +1332,16 @@ ahorro_medio.to_csv(f"{CLEAN_DIR}/ahorro_medio_mensual.csv", index=False)
 print("\n" + "=" * 60)
 print("RESUMEN FINAL")
 print("=" * 60)
-print(f"  Modelo 1 — Regresión Lineal (histórico t-1..t-3):")
+print(f"  Modelo 1 — {nombre_m1} {params_m1} (histórico t-1..t-3):")
 print(f"    MAE = {mae_lr:.2f}€ | R² = {r2_lr:.4f}")
+print(f"  Modelo avanzado — Ensemble HGB: MAE = {mae_hgb:.2f}€ | R² = {r2_hgb:.4f} | "
+      f"F1 macro clasificación = {f1_hgb:.4f}")
 print(f"  Modelo 1-bis — Proyección individual: "
       f"{len(tabla_kpi_usuarios):,} usuarios")
 print(f"  Capa prescriptiva — Usuarios con recomendación de ajuste: "
       f"{n_con_ajuste:,} ({pct_con_ajuste}%)")
 print(f"  Modelo 2 — Regresión Logística (histórico t-1..t-3):")
-print(f"    Accuracy = {acc:.4f}")
+print(f"    Accuracy = {acc:.4f} | F1 macro = {f1_macro_m2:.4f} | C = {params_m2['C']}")
 print(f"  Modelo 3 — Proyección temporal agregada:")
 print(f"    Ahorro proyectado {df_pred.iloc[0]['fecha']}: {predicciones[0]:.2f}€")
 print(f"    Ahorro proyectado {df_pred.iloc[-1]['fecha']}: {predicciones[-1]:.2f}€")
