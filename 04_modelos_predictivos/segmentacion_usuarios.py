@@ -55,7 +55,7 @@ CATEGORIAS = ['vivienda', 'alimentacion', 'transporte', 'ocio', 'otros']
 # 1. AGREGACIÓN A NIVEL DE USUARIO
 # ============================================================
 
-def construir_perfil_usuario(df):
+def construir_perfil_usuario(df, df_obs=None):
     """Agrega el dataset mensual (fila = usuario-mes) a un perfil
     comportamental ESTABLE por usuario (fila = usuario).
 
@@ -100,9 +100,16 @@ def construir_perfil_usuario(df):
     perfil['volatilidad_ahorro'] = (perfil['ahorro_std'] /
                                      perfil['ingreso_medio'].replace(0, np.nan)).fillna(0)
 
-    gasto_total_medio = g['gasto_total'].mean()
+    # Composición del gasto: se calcula sobre el gasto OBSERVADO en las
+    # transacciones (antes de la imputación del gasto estructural, script
+    # 06b). El gasto imputado sigue por construcción la estructura media de
+    # la EPF 2024 y es igual para todos los usuarios, por lo que no aporta
+    # información de comportamiento; la composición del gasto observado sí
+    # refleja los hábitos de consumo discrecional de cada usuario.
+    go = df_obs.groupby('user_id') if df_obs is not None else g
+    gasto_total_medio = go['gasto_total'].mean()
     for cat in CATEGORIAS:
-        perfil[f'pct_gasto_{cat}'] = (g[cat].mean() / gasto_total_medio.replace(0, np.nan)).fillna(0)
+        perfil[f'pct_gasto_{cat}'] = (go[cat].mean() / gasto_total_medio.replace(0, np.nan)).reindex(perfil.index).fillna(0)
 
     # Tasa de ahorro media winsorizada (percentiles 1 y 99): K-Means
     # minimiza distancias euclídeas al cuadrado y es muy sensible a
@@ -328,7 +335,9 @@ if __name__ == '__main__':
     df = pd.read_csv(path)
     df, cols_perfil = codificar_perfil_onehot(df)
 
-    perfil = construir_perfil_usuario(df)
+    path_obs = os.path.join(DATA_DIR, '_v1_sin_calibrar', 'dataset_final_usuarios_tink.csv')
+    df_obs = pd.read_csv(path_obs, usecols=['user_id', 'gasto_total'] + CATEGORIAS) if os.path.exists(path_obs) else None
+    perfil = construir_perfil_usuario(df, df_obs)
     perfil = perfil.merge(df.groupby('user_id')[cols_perfil + ['profile_source']].first()
                           .reset_index(), on='user_id')
     print(f"\nPerfiles de usuario construidos: {len(perfil):,}")
@@ -348,7 +357,17 @@ if __name__ == '__main__':
     print(f"\nK elegido: {k_elegido} (máximo global de la silueta en k=2..8)")
 
     km_final = KMeans(n_clusters=k_elegido, random_state=RANDOM_STATE, n_init=10)
-    perfil['cluster'] = km_final.fit_predict(X_scaled)
+    etiquetas = km_final.fit_predict(X_scaled)
+    # Renumeración estable de los segmentos: K-Means asigna los números de
+    # clúster de forma arbitraria. Se reordenan de menor a mayor tasa de
+    # ahorro agregada (ahorro total / ingreso total del segmento), de modo
+    # que el segmento 0 es siempre el de menor ahorro y la numeración es la
+    # misma en la memoria, en las figuras y en el panel de Tableau.
+    tmp = df[['user_id', 'ahorro', 'salario']].merge(
+        pd.DataFrame({'user_id': perfil['user_id'], 'c': etiquetas}), on='user_id')
+    agr = tmp.groupby('c')[['ahorro', 'salario']].sum()
+    orden = (agr['ahorro'] / agr['salario']).sort_values().index
+    perfil['cluster'] = pd.Series(etiquetas).map({c: i for i, c in enumerate(orden)}).values
 
     idx_sil = np.random.default_rng(RANDOM_STATE).choice(len(X_scaled), 20000, replace=False)
     sil_final = silhouette_score(X_scaled[idx_sil], perfil['cluster'].values[idx_sil])

@@ -1,0 +1,33 @@
+{
+  "antes": {
+    "tasa_mediana": 88.41,
+    "tasa_agregada": 88.11029570328336,
+    "gasto_mediano": 366.7
+  },
+  "despues": {
+    "tasa_mediana": 10.52,
+    "tasa_agregada": 14.295206633468336,
+    "gasto_mediano": 3248.41,
+    "estructura_gasto_pct": {
+      "vivienda": 35.3,
+      "alimentacion": 26.3,
+      "transporte": 11.2,
+      "ocio": 5.2,
+      "salud": 3.9,
+      "educacion": 1.6,
+      "otros": 16.5
+    },
+    "tasa_agregada_por_perfil": {
+      "freelance": 8.6,
+      "junior": -8.7,
+      "medio": 11.0,
+      "senior": 16.0
+    },
+    "pct_meses_ahorro_negativo": 24.05912738316602
+  },
+  "umbral_mediana_pct": 10.52,
+  "referencias": [
+    "INE, Encuesta de Presupuestos Familiares 2024",
+    "INE, Cuentas trimestrales no financieras de los sectores institucionales (tasa de ahorro de los hogares 2025: 12 %)"
+  ]
+}

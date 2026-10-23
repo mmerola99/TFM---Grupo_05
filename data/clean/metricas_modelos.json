@@ -1,6 +1,6 @@
 {
-  "modelo1_mae": 607.51,
-  "modelo1_r2": 0.799,
+  "modelo1_mae": 595.78,
+  "modelo1_r2": 0.1586,
   "modelo1_n_features": 18,
   "modelo1_features": [
     "edad",
@@ -23,9 +23,9 @@
     "otros_lag1"
   ],
   "validacion": "GroupShuffleSplit por user_id (20% usuarios en test); ajuste de hiperparametros con GridSearchCV + GroupKFold (5 pliegues) sobre el conjunto de entrenamiento",
-  "modelo1_modelo_seleccionado": "Lasso",
+  "modelo1_modelo_seleccionado": "Ridge",
   "modelo1_hiperparametros": {
-    "alpha": 1
+    "alpha": 1000
   },
   "modelo1_cv_resultados": [
     {
@@ -33,178 +33,178 @@
       "parametros": {
         "alpha": 0.01
       },
-      "cv_mae": 615.03,
-      "cv_std": 2.14
+      "cv_mae": 603.91,
+      "cv_std": 1.59
     },
     {
       "modelo": "Ridge",
       "parametros": {
         "alpha": 0.1
       },
-      "cv_mae": 615.03,
-      "cv_std": 2.14
+      "cv_mae": 603.91,
+      "cv_std": 1.59
     },
     {
       "modelo": "Ridge",
       "parametros": {
         "alpha": 1
       },
-      "cv_mae": 615.01,
-      "cv_std": 2.14
+      "cv_mae": 603.87,
+      "cv_std": 1.58
     },
     {
       "modelo": "Ridge",
       "parametros": {
         "alpha": 10
       },
-      "cv_mae": 614.85,
-      "cv_std": 2.14
+      "cv_mae": 603.49,
+      "cv_std": 1.57
     },
     {
       "modelo": "Ridge",
       "parametros": {
         "alpha": 100
       },
-      "cv_mae": 613.65,
-      "cv_std": 2.16
+      "cv_mae": 601.29,
+      "cv_std": 1.48
     },
     {
       "modelo": "Ridge",
       "parametros": {
         "alpha": 1000
       },
-      "cv_mae": 615.02,
-      "cv_std": 2.25
+      "cv_mae": 601.2,
+      "cv_std": 1.5
     },
     {
       "modelo": "Ridge",
       "parametros": {
         "alpha": 10000
       },
-      "cv_mae": 635.38,
-      "cv_std": 2.47
+      "cv_mae": 608.29,
+      "cv_std": 1.64
     },
     {
       "modelo": "Lasso",
       "parametros": {
         "alpha": 0.1
       },
-      "cv_mae": 614.87,
-      "cv_std": 2.14
+      "cv_mae": 603.09,
+      "cv_std": 1.56
     },
     {
       "modelo": "Lasso",
       "parametros": {
         "alpha": 1
       },
-      "cv_mae": 613.38,
-      "cv_std": 2.19
+      "cv_mae": 601.22,
+      "cv_std": 1.42
     },
     {
       "modelo": "Lasso",
       "parametros": {
         "alpha": 5
       },
-      "cv_mae": 616.89,
-      "cv_std": 2.35
+      "cv_mae": 612.41,
+      "cv_std": 1.7
     },
     {
       "modelo": "Lasso",
       "parametros": {
         "alpha": 10
       },
-      "cv_mae": 639.31,
-      "cv_std": 2.61
+      "cv_mae": 612.65,
+      "cv_std": 1.67
     }
   ],
   "modelo1_baselines_test": {
     "Persistencia (ahorro del mes anterior)": {
-      "mae": 721.18,
-      "r2": 0.6305
+      "mae": 727.12,
+      "r2": -0.5469
     },
     "Media m\u00f3vil de 3 meses (ahorro_roll3)": {
-      "mae": 615.92,
-      "r2": 0.7557
+      "mae": 619.93,
+      "r2": -0.0226
     },
     "Media del conjunto de entrenamiento": {
-      "mae": 1606.41,
-      "r2": -0.0001
+      "mae": 718.23,
+      "r2": -0.0
     }
   },
   "modelo1_colinealidad": {
     "corr_salario_lag1_log_vs_salario_roll3_log": 0.96,
-    "corr_salario_roll3_log_vs_ahorro": 0.848,
+    "corr_salario_roll3_log_vs_ahorro": 0.326,
     "coeficientes": {
       "salario_lag1_log": {
-        "ols": 557.1,
-        "modelo_seleccionado": 230.6,
-        "media_pliegues": 230.7,
-        "std_pliegues": 3.6
+        "ols": 535.3,
+        "modelo_seleccionado": 20.5,
+        "media_pliegues": 2.6,
+        "std_pliegues": 7.9
       },
       "salario_roll3_log": {
-        "ols": -5012.7,
-        "modelo_seleccionado": -4282.7,
-        "media_pliegues": -4282.8,
-        "std_pliegues": 2.9
+        "ols": -2438.7,
+        "modelo_seleccionado": -928.7,
+        "media_pliegues": -812.0,
+        "std_pliegues": 6.9
       }
     }
   },
-  "modelo1_nota_colinealidad": "salario_lag1_log y salario_roll3_log estan fuertemente correlacionadas (r=0.96). salario_roll3_log recibe un coeficiente negativo pese a correlacionar positivamente con el ahorro (r=+0.85). La regularizacion seleccionada por validacion cruzada (Ridge o Lasso) apenas modifica los coeficientes respecto a OLS, porque la validacion cruzada optimiza el error de prediccion, no la interpretabilidad; y Lasso no anula ninguna de las dos variables. El coeficiente es estable entre pliegues de la validacion cruzada, por lo que no es inestabilidad numerica sino un efecto condicional (de supresion): mide el efecto de salario_roll3_log manteniendo constantes el salario del mes anterior y los rezagos de ahorro, no su efecto marginal. Los coeficientes de ambas variables de salario deben interpretarse conjuntamente.",
-  "modelo2_accuracy": 0.7258,
-  "modelo2_f1_macro": 0.7209,
+  "modelo1_nota_colinealidad": "salario_lag1_log y salario_roll3_log estan fuertemente correlacionadas (r=0.96). salario_roll3_log recibe un coeficiente negativo pese a correlacionar positivamente con el ahorro (r=+0.33). La regularizacion seleccionada por validacion cruzada (Ridge o Lasso) apenas modifica los coeficientes respecto a OLS, porque la validacion cruzada optimiza el error de prediccion, no la interpretabilidad; y Lasso no anula ninguna de las dos variables. El coeficiente es estable entre pliegues de la validacion cruzada, por lo que no es inestabilidad numerica sino un efecto condicional (de supresion): mide el efecto de salario_roll3_log manteniendo constantes el salario del mes anterior y los rezagos de ahorro, no su efecto marginal. Los coeficientes de ambas variables de salario deben interpretarse conjuntamente.",
+  "modelo2_accuracy": 0.6699,
+  "modelo2_f1_macro": 0.6698,
   "modelo2_C_seleccionado": 0.01,
   "modelo2_cv_resultados": [
     {
       "parametros": {
         "C": 0.001
       },
-      "cv_media": 0.721,
-      "cv_std": 0.0012
+      "cv_media": 0.6668,
+      "cv_std": 0.0023
     },
     {
       "parametros": {
         "C": 0.01
       },
-      "cv_media": 0.7211,
-      "cv_std": 0.0013
+      "cv_media": 0.6683,
+      "cv_std": 0.0019
     },
     {
       "parametros": {
         "C": 0.1
       },
-      "cv_media": 0.721,
-      "cv_std": 0.0012
+      "cv_media": 0.6674,
+      "cv_std": 0.0021
     },
     {
       "parametros": {
         "C": 1
       },
-      "cv_media": 0.7209,
-      "cv_std": 0.0011
+      "cv_media": 0.6671,
+      "cv_std": 0.0022
     },
     {
       "parametros": {
         "C": 10
       },
-      "cv_media": 0.7209,
-      "cv_std": 0.0011
+      "cv_media": 0.667,
+      "cv_std": 0.0022
     },
     {
       "parametros": {
         "C": 100
       },
-      "cv_media": 0.721,
-      "cv_std": 0.0011
+      "cv_media": 0.6671,
+      "cv_std": 0.0022
     }
   ],
   "modelo2_baselines_test": {
     "Clase mayoritaria": {
-      "accuracy": 0.5306,
-      "f1_macro": 0.3467
+      "accuracy": 0.5028,
+      "f1_macro": 0.3346
     },
     "Persistencia (clase del mes anterior)": {
-      "accuracy": 0.6235,
-      "f1_macro": 0.6221
+      "accuracy": 0.6492,
+      "f1_macro": 0.6492
     }
   },
   "modelo2_clases": [
@@ -216,116 +216,116 @@
     "regresion": {
       "hiperparametros": {
         "learning_rate": 0.05,
-        "max_leaf_nodes": 15
+        "max_leaf_nodes": 63
       },
-      "mae_test": 558.8,
-      "r2_test": 0.8161,
+      "mae_test": 562.87,
+      "r2_test": 0.2299,
       "cv_resultados": [
         {
           "parametros": {
             "learning_rate": 0.05,
             "max_leaf_nodes": 15
           },
-          "cv_mae": 565.39,
-          "cv_std": 1.83
+          "cv_mae": 573.26,
+          "cv_std": 1.18
         },
         {
           "parametros": {
             "learning_rate": 0.05,
             "max_leaf_nodes": 31
           },
-          "cv_mae": 565.45,
-          "cv_std": 1.82
+          "cv_mae": 570.54,
+          "cv_std": 1.21
         },
         {
           "parametros": {
             "learning_rate": 0.05,
             "max_leaf_nodes": 63
           },
-          "cv_mae": 565.52,
-          "cv_std": 1.87
+          "cv_mae": 569.6,
+          "cv_std": 1.16
         },
         {
           "parametros": {
             "learning_rate": 0.1,
             "max_leaf_nodes": 15
           },
-          "cv_mae": 565.45,
-          "cv_std": 1.79
+          "cv_mae": 572.12,
+          "cv_std": 1.29
         },
         {
           "parametros": {
             "learning_rate": 0.1,
             "max_leaf_nodes": 31
           },
-          "cv_mae": 565.55,
-          "cv_std": 1.88
+          "cv_mae": 570.5,
+          "cv_std": 1.24
         },
         {
           "parametros": {
             "learning_rate": 0.1,
             "max_leaf_nodes": 63
           },
-          "cv_mae": 565.66,
-          "cv_std": 1.95
+          "cv_mae": 569.78,
+          "cv_std": 1.17
         }
       ]
     },
     "clasificacion": {
       "hiperparametros": {
         "learning_rate": 0.1,
-        "max_leaf_nodes": 15
+        "max_leaf_nodes": 63
       },
-      "accuracy_test": 0.7247,
-      "f1_macro_test": 0.7212,
+      "accuracy_test": 0.7254,
+      "f1_macro_test": 0.7216,
       "cv_resultados": [
         {
           "parametros": {
             "learning_rate": 0.05,
             "max_leaf_nodes": 15
           },
-          "cv_media": 0.7217,
-          "cv_std": 0.0011
+          "cv_media": 0.7167,
+          "cv_std": 0.0021
         },
         {
           "parametros": {
             "learning_rate": 0.05,
             "max_leaf_nodes": 31
           },
-          "cv_media": 0.7215,
-          "cv_std": 0.001
+          "cv_media": 0.719,
+          "cv_std": 0.002
         },
         {
           "parametros": {
             "learning_rate": 0.05,
             "max_leaf_nodes": 63
           },
-          "cv_media": 0.7212,
-          "cv_std": 0.0007
+          "cv_media": 0.7197,
+          "cv_std": 0.0019
         },
         {
           "parametros": {
             "learning_rate": 0.1,
             "max_leaf_nodes": 15
           },
-          "cv_media": 0.7217,
-          "cv_std": 0.0012
+          "cv_media": 0.7185,
+          "cv_std": 0.0016
         },
         {
           "parametros": {
             "learning_rate": 0.1,
             "max_leaf_nodes": 31
           },
-          "cv_media": 0.7214,
-          "cv_std": 0.0011
+          "cv_media": 0.7194,
+          "cv_std": 0.0017
         },
         {
           "parametros": {
             "learning_rate": 0.1,
             "max_leaf_nodes": 63
           },
-          "cv_media": 0.721,
-          "cv_std": 0.0011
+          "cv_media": 0.7199,
+          "cv_std": 0.0021
         }
       ]
     }
@@ -334,45 +334,45 @@
   "modelo3_predicciones": [
     {
       "fecha": "2026-08",
-      "ahorro_predicho": 3806.78
+      "ahorro_predicho": 653.03
     },
     {
       "fecha": "2026-09",
-      "ahorro_predicho": 3805.08
+      "ahorro_predicho": 652.31
     },
     {
       "fecha": "2026-10",
-      "ahorro_predicho": 3804.5
+      "ahorro_predicho": 653.55
     },
     {
       "fecha": "2026-11",
-      "ahorro_predicho": 3805.23
+      "ahorro_predicho": 656.39
     },
     {
       "fecha": "2026-12",
-      "ahorro_predicho": 3807.09
+      "ahorro_predicho": 660.01
     },
     {
       "fecha": "2027-01",
-      "ahorro_predicho": 3809.62
+      "ahorro_predicho": 663.42
     }
   ],
   "modelo3_metodo": "Indice encadenado (chain-linked) sobre usuarios comunes entre meses consecutivos, en lugar de media transversal simple. Corrige la distorsion por composicion cambiante de la muestra (entre ~5.000 y ~30.000 usuarios activos segun el mes, por las distintas ventanas temporales de los 8 perfiles reales de origen Tink). Ver docstring de build_chained_savings_index().",
-  "modelo3_r2_insample": 0.08,
-  "modelo3_std_serie": 15.15,
-  "modelo3_nivel_medio_serie": 3805.56,
+  "modelo3_r2_insample": 0.041,
+  "modelo3_std_serie": 27.98,
+  "modelo3_nivel_medio_serie": 664.37,
   "modelo3_backtest_mae_6meses": {
-    "Modelo 3 (tendencia + estacionalidad)": 16.62,
-    "Ingenuo: \u00faltimo valor observado": 13.97,
-    "Ingenuo: media hist\u00f3rica": 7.94,
-    "Ingenuo estacional: mismo mes del a\u00f1o anterior": 14.02
+    "Modelo 3 (tendencia + estacionalidad)": 42.09,
+    "Ingenuo: \u00faltimo valor observado": 39.42,
+    "Ingenuo: media hist\u00f3rica": 32.85,
+    "Ingenuo estacional: mismo mes del a\u00f1o anterior": 39.83
   },
   "modelo3_usuarios_comunes_min": 5066,
   "modelo3_usuarios_comunes_mediana": 9986,
   "particion": "GroupShuffleSplit por user_id (20% usuarios en test)",
   "usuarios_train": 19901,
   "usuarios_test": 4976,
-  "prescriptivo_usuarios_con_ajuste": 15693,
-  "prescriptivo_pct_usuarios_con_ajuste": 52.5,
-  "prescriptivo_cobertura_media_brecha_pct": 43.5
+  "prescriptivo_usuarios_con_ajuste": 9285,
+  "prescriptivo_pct_usuarios_con_ajuste": 31.1,
+  "prescriptivo_cobertura_media_brecha_pct": 97.4
 }

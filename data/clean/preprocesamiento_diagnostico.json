@@ -1,7 +1,7 @@
 {
   "skewness_original": {
     "salario": 1.0618328688108323,
-    "gasto_total": 13.010727683033455
+    "gasto_total": 1.171179100987181
   },
   "variables_transformadas": [
     "salario",

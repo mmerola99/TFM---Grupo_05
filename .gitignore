@@ -5,3 +5,5 @@ data/clean/*.csv
 data/clean/dataset_final_usuarios.csv
 
 __pycache__/
+
+data/clean/_v1_sin_calibrar/
